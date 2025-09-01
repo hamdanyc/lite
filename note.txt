@@ -1,1 +1,8 @@
-python harvest.py "psychology using chatgpt students education" -n 20
+1. Download GS webpage (save as html only) | populate html files to pages dir for extracting the Title, Author & pdf.
+2. run gs_extract_page.py pages/           | script to extract Title, Author & pdf. -> articles.csv, url.txt
+3. run gs_download_pdf.sh                  | script to download pdf to pdf dir. -> pdf/pdf
+
+Tools:
+A. verify_pdf.py
+B. src_downloader.sh
+C. gs_curl_page.sh
