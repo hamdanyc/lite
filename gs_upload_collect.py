@@ -52,8 +52,7 @@ Example format:
                 "Publication": "",
                 "Year": "",
                 "Publisher": "",
-                "Abstract": "",
-                "page_number": 1
+                "Abstract": ""
             }
             
             for line in response_text.split('\n'):
@@ -92,10 +91,10 @@ def process_pdf(pdf_path):
         reader = PdfReader(pdf_path)
         documents = []
         for i, page in enumerate(reader.pages):
+            metadatas = {}
             text = page.extract_text()
-
-            metadatas = extract_metadata_with_llm(text, llm)
-
+            if i == 0:
+                metadatas = extract_metadata_with_llm(text, llm)
             metadata = {
                 "page_number": i + 1,
                 "word_count": len(text.split()) if text else 0,
