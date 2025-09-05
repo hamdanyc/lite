@@ -144,22 +144,31 @@ def main():
         # 2a. Summarize each chunk if needed
         summarized_chunk = summarize_long_text(chunk, llm)
         
-        # 2b. Categorize this chunk
+        # 2b. Categorize this chunk with a more generic instruction
         prompt = PromptTemplate.from_template(
-            "Please read through the following text, identify categories, and for each category "
-            "you find, provide:\n1. The category name\n2. Description of the category\n3. Which collections this category is present in\n\n"
-            "Format your response like this:\n"
-            "Category: [category name]\n"
-            "Description: [description of category]\n"
-            "Collections: [comma-separated list of collections]\n\n\n"
+            "Please analyze the following text and identify {context} that defines the text. "
+            "For each identified statement; "
+            "provide:\n"
+            "1. The statement title\n"
+            "2. Description of the statement\n"
+            "3. Which collections this statement appears in\n"
+            "4. Excerpt(s) from the collections and the citation with the page_number\n"
+
+            "Example:"
+            "1. Statement title\n"
+            "2. Writing, whether traditional or digitalized, remains a complex and iterative process. The complexity of digitalized writing is further compounded by the use of multiple digital tools at different stages of the writing process.\n"
+            "3. collection: A_Systematic_Review_of_ChatGPT\n"
+            "4. Excerpt from the page_number: 39\n"
+            "5. Mark Feng Teng Wright, et al."
+
             "Text to analyze:\n\n{text}"
         )
         
         chain = prompt | llm
-        chunk_categorization = chain.invoke({"text": summarized_chunk})
+        chunk_categorization = chain.invoke({"text": summarized_chunk, "context": "future study"})
         
         # Add chunk number to the categorization
-        chunk_categorization.content = f"Chunk {i+1} categorization:\n{chunk_categorization.content}"
+        chunk_categorization.content = f"Chunk {i+1} overview:\n{chunk_categorization.content}"
         chunk_categorizations.append(chunk_categorization.content)
         
         # Optional: add delay between requests to avoid hitting rate limits
