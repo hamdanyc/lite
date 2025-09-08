@@ -1,4 +1,5 @@
 import os
+import sys
 from chromadb import CloudClient
 from langchain_core.prompts import PromptTemplate
 from langchain_groq import ChatGroq
@@ -86,12 +87,21 @@ def chunk_retrieval_data(text, max_chunk_size=7500):
 
 def write_to_file(filename, content):
     # Write content to file
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, 'w', encoding='utf-8') as f:
         f.write(content)
     print(f"Results written to {filename}")
 
 def main():
-    # Initialize ChromaDB client
+    if len(sys.argv) < 4:
+        print("Usage: python multi_collection_prompt.py [CONTEXT] [OUTPUT_DIR/FILENAME] [N_RESULTS]")
+        sys.exit(1)
+        
+    # Parse command line arguments
+    context = sys.argv[1]
+    output_file = sys.argv[2]
+    n_results = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+    
     # Load environment variables
     load_dotenv()
 
@@ -117,8 +127,8 @@ def main():
     # Query each collection one by one
     all_results = []
     query_criteria = {
-        "text": "text",
-        "n_results": 5 
+        "text": "Find all relevant documents",  # Changed to more general query
+        "n_results": n_results  # Number of documents to retrieve from each collection
     }
     
     # Read all collections
@@ -144,15 +154,17 @@ def main():
         # 2a. Summarize each chunk if needed
         summarized_chunk = summarize_long_text(chunk, llm)
         
-        # 2b. Categorize this chunk with a more generic instruction
+        # 2b. Categorize this chunk with a user-defined context
         prompt = PromptTemplate.from_template(
-            "Please analyze the following text and summarize it. "
-            "For each {context}:"
+            "Please analyze the following text and identify {context} that defines the text. "
+            "For each identified statement; "
+            "provide:\n"
             "1. Title\n"
-            "2. Description about the text\n"
-            "3. Which collections this statement appears in\n"
-            "4. Excerpt(s) from the collections and the citation with the page_number\n"
-            "5. Consize summary and list of the key findings"
+            "2. Brief description of the statement\n"
+            "3. Collections name\n"
+            "4. Excerpt(s) from the collections with the citation\n"
+            "5. Summary statement about the {context}"
+            "6. Keyword(s)"
 
             "Example:"
             "1. Statement title\n"
@@ -160,12 +172,13 @@ def main():
             "3. collection: A_Systematic_Review_of_ChatGPT\n"
             "4. Excerpt from the page_number: 39; Mark Feng Teng Wright, et al.\n"
             "5. Summary on the issue"
+            "6. Keyword(s). Relevant keyword(s)"
 
             "Text to analyze:\n\n{text}"
         )
         
         chain = prompt | llm
-        chunk_categorization = chain.invoke({"text": summarized_chunk, "context": "research design"})
+        chunk_categorization = chain.invoke({"text": summarized_chunk, "context": context})
         
         # Add chunk number to the categorization
         chunk_categorization.content = f"Chunk {i+1} overview:\n{chunk_categorization.content}"
@@ -176,7 +189,7 @@ def main():
     
     # 3. Combine results and write to file
     final_categorization = "\n\n---\n\n".join(chunk_categorizations)
-    write_to_file('compiled.txt', final_categorization)
+    write_to_file(output_file, final_categorization)
     
     # Output the categorized results
     print("Document Categorizations:")
