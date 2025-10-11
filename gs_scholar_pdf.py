@@ -1,34 +1,23 @@
 import requests
 import os
 import csv
-import re
 import json
-
-def generate_short_title(title):
-    """Simulated LLM function to generate a short title (max 15 chars)"""
-    # In a real implementation, this would call an LLM API
-    # For this example, we'll just take the first 15 characters
-    if not title:
-        return "dl"
-    
-    # Remove any non-alphanumeric characters and spaces
-    clean_title = re.sub(r'[^a-zA-Z0-9\s]', '', title)
-    
-    # Split by spaces and take first 2-3 words (max 15 chars)
-    words = clean_title.split()
-    short_title = ""
-    
-    for word in words:
-        if len(short_title) + len(word) + 1 <= 15:
-            short_title = short_title + ("-" if short_title else "") + word
-        else:
-            break
-    
-    return short_title if short_title else "dl"
+import re  # Added missing import for regular expressions
+from tqdm import tqdm
 
 # Create pdf directory if it doesn't exist
-if not os.path.exists('pdf'):
-    os.makedirs('pdf')
+pdf_dir = 'pdf'
+if not os.path.exists(pdf_dir):
+    os.makedirs(pdf_dir)
+else:
+    # Remove all existing files in pdf directory
+    for filename in os.listdir(pdf_dir):
+        file_path = os.path.join(pdf_dir, filename)
+        try:
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            print(f"Error deleting {file_path}: {e}")
 
 # Create error log file
 error_log = []
@@ -42,23 +31,23 @@ with open('articles.csv', newline='') as csvfile:
     downloaded_count = 0
     failed_count = 0
     
+    # Create progress bar
+    progress_bar = tqdm(total=total_articles, desc="Downloading", unit="file")
+    
     for index, row in enumerate(reader, 1):
         url = row['URL']
-        title = row.get('Title', '')
+        short_title = row['Short-Title']  # Use short_title from CSV
         
         try:
-            # Generate short title using LLM (simulated here)
-            short_title = generate_short_title(title)
+            # Use short_title from CSV as filename
+            filename = f"{short_title}.pdf"
             
-            # Use Title from CSV as filename if available, otherwise use URL
-            if title:
-                filename = f"{short_title}-{title}.pdf"
-            else:
-                filename = url.split('/')[-1]
+            # Convert to lowercase (small caps)
+            filename = filename.lower()
             
-            # If filename is empty (URL ends with /), use a default name
-            if not filename:
-                filename = 'downloaded_file.pdf'
+            # Truncate to 63 characters (leaving space for .pdf extension)
+            if len(filename) > 63:
+                filename = filename[:60] + '.pdf'
             
             # Sanitize filename by removing special characters
             filename = re.sub(r'[<>:"/\\|?*]', '', filename)
@@ -67,7 +56,7 @@ with open('articles.csv', newline='') as csvfile:
             if not filename.endswith('.pdf'):
                 filename += '.pdf'
             
-            filename = os.path.join('pdf', filename)
+            filename = os.path.join(pdf_dir, filename)
             
             # Download the PDF
             response = requests.get(url)
@@ -78,8 +67,8 @@ with open('articles.csv', newline='') as csvfile:
                 file.write(response.content)
             
             downloaded_count += 1
-            print(f"({index}/{total_articles}) Successfully downloaded {filename}")
-        
+            progress_bar.update(1)
+            
         except requests.exceptions.RequestException as e:
             failed_count += 1
             error_entry = {
@@ -88,7 +77,9 @@ with open('articles.csv', newline='') as csvfile:
                 "filename": filename if 'filename' in locals() else "N/A"
             }
             error_log.append(error_entry)
-            print(f"({index}/{total_articles}) Error downloading {url}: {e}")
+            progress_bar.update(1)
+    
+    progress_bar.close()
     
     # Write errors to JSON file
     with open('error.json', 'w') as error_file:
