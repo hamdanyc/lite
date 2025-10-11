@@ -37,13 +37,33 @@ def generate_short_title(title):
         short_title = '-'.join(words)
         if len(short_title) > 100:  # Safety check for very long titles
             short_title = '-'.join(words[:8])
+
+    # Sanitize short title by replacing spaces and non-printable characters with hyphens
+    # First replace spaces with hyphens, then remove any invalid characters
+    short_title = short_title.replace(' ', '-')
+    short_title = re.sub(r'[^\x20-\x7E]', '-', short_title)  # Replace non-printable characters with hyphens
+    short_title = re.sub(r'[-]+', '-', short_title)  # Replace multiple hyphens with a single hyphen
+    
+    # Handle special cases like colons, apostrophes, and multiple hyphens
+    short_title = re.sub(r'[:\']', '-', short_title)
+    short_title = re.sub(r'--+', '-', short_title)  # Ensure we don't have multiple hyphens
+    
+    # Handle cases where we have multiple hyphens from apostrophes or other characters
+    short_title = re.sub(r'(-\d+-)', r'-\1', short_title)  # Preserve numbers between hyphens
+    
+    # Fix specific problematic patterns
+    short_title = re.sub(r'(-+)(\d+)(-+)', r'-\2-', short_title)  # Clean up around numbers
+    short_title = re.sub(r'(-+)([a-zA-Z]+)(-+)', r'-\2-', short_title)  # Clean up around words
+    
+    # Remove leading/trailing hyphens
+    short_title = short_title.strip('-')
     
     return short_title
 
 def process_html_files(directory):
     results = []
     
-    # Get all HTML files in the directory
+    # Get all HTML files in the directory (no limit now)
     html_files = [f for f in os.listdir(directory) if f.endswith('.html')]
     total_files = len(html_files)
     
@@ -80,32 +100,31 @@ def process_html_files(directory):
                     # Strategy 1: Look for the PDF div with [PDF] link
                     pdf_div = item.find('div', class_='gs_or_ggsm')
                     if pdf_div:
-                        # print("Found PDF div")
                         # Try to find a link with PDF in the text
                         pdf_link = pdf_div.find('a', string=lambda t: t and '[PDF]' in t)
                         if pdf_link:
-                            # print("Found PDF link by text")
                             url_tag = pdf_link
                         else:
                             # If that fails, just get any link
                             url_tag = pdf_div.find('a', href=True)
-                            if url_tag:
-                                # print(f"Found link by href: {url_tag['href']}")
-                                pass
                     else:
-                        # print("No PDF div found")
-                        # Strategy 2: If we couldn't find the PDF div, try finding any link in the item
+                        # If we couldn't find the PDF div, try finding any link in the item
                         url_tag = item.find('a', href=True)
-                        if url_tag:
-                            # print(f"Found fallback link: {url_tag['href']}")
-                            pass
-                        else:
-                            # print("No link found in item")
-                            pass
+                    
+                    # Additional strategy: look for links in the citation metadata
+                    if not url_tag:
+                        cite_link = item.find('a', href=True, string=lambda t: t and 'cite' in t.lower())
+                        if cite_link:
+                            url_tag = cite_link
+                    
+                    # Additional strategy: look for links in the publication info
+                    if not url_tag:
+                        pub_info = item.find('div', class_='gs_fl')
+                        if pub_info:
+                            url_tag = pub_info.find('a', href=True)
                     
                     # Use any URL found, not just PDF links
                     url = url_tag['href'] if url_tag or 'href' in url_tag else "N/A"
-                    # print(f"Final URL: {url}")
 
                     author_tag = item.find('div', class_='gs_a')
                     author_text = author_tag.get_text(strip=True) if author_tag else "N/A"
