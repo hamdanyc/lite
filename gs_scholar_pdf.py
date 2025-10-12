@@ -45,12 +45,12 @@ with open('articles.csv', newline='') as csvfile:
             # Convert to lowercase (small caps)
             filename = filename.lower()
             
-            # Truncate to 63 characters (leaving space for .pdf extension)
-            if len(filename) > 63:
-                filename = filename[:60] + '.pdf'
+            # Truncate to 53 characters (leaving space for .pdf extension)
+            if len(filename) > 53:
+                filename = filename[:50] + '.pdf'
             
             # Sanitize filename by removing special characters
-            filename = re.sub(r'[<>:"/\\|?*]', '', filename)
+            filename = re.sub(r'[,<>:"/\\|?*]', '', filename)
             
             # Ensure the filename has a .pdf extension
             if not filename.endswith('.pdf'):

@@ -1,10 +1,11 @@
 import os
+import json
+import time
 from PyPDF2 import PdfReader
 from chromadb import CloudClient
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage
-import json
 
 def init_chat_model(model_name, model_provider):
     """Initialize chat model based on provider"""
@@ -135,7 +136,12 @@ def main():
     
     print(f"Found {len(pdf_files)} PDF files to process")
     
-    # Process each PDF file
+    # Initialize counters and error log
+    success_count = 0
+    fail_count = 0
+    error_log = []
+    
+    # Process each PDF file with progress bar
     for idx, pdf_file in enumerate(pdf_files, 1):
         pdf_path = os.path.join(pdf_dir, pdf_file)
         print(f"\nProcessing {pdf_file} ({idx}/{len(pdf_files)})")
@@ -146,6 +152,7 @@ def main():
             
             if not documents:
                 print(f"No documents extracted from {pdf_file}")
+                fail_count += 1
                 continue
                 
             # Create collection name from file name
@@ -155,6 +162,7 @@ def main():
             existing_collections = client.list_collections()
             if collection_name in [col.name for col in existing_collections]:
                 print(f"Collection '{collection_name}' already exists. Skipping...")
+                fail_count += 1
                 continue
                 
             # Create new collection
@@ -169,10 +177,35 @@ def main():
                 )
                 
             print(f"✅ Successfully uploaded {len(documents)} pages to new collection '{collection_name}'")
+            success_count += 1
             
         except Exception as e:
-            print(f"❌ Error uploading {pdf_file}: {str(e)}")
+            error_message = str(e)
+            print(f"❌ Error uploading {pdf_file}: {error_message}")
+            error_log.append({
+                "pdf_file": pdf_file,
+                "error_message": error_message
+            })
+            fail_count += 1
             continue
+        
+        # Update progress bar
+        progress = (idx / len(pdf_files)) * 100
+        bar_length = 50
+        filled_length = int(bar_length * idx // len(pdf_files))
+        bar = '█' * filled_length + '-' * (bar_length - filled_length)
+        print(f"\rProgress: |{bar}| {progress:.1f}% Complete", end='', flush=True)
+        time.sleep(0.1)  # Small delay to allow progress bar to update
+    
+    # Save error log to file
+    with open('upload.json', 'w') as f:
+        json.dump(error_log, f, indent=2)
+    print("\n\nError log saved to upload.json")
+    
+    # Display final statistics
+    print(f"\n\n✅ Successfully uploaded: {success_count} PDF files")
+    print(f"❌ Failed to upload: {fail_count} PDF files")
+    print(f"Total processed: {success_count + fail_count} PDF files")
 
 if __name__ == "__main__":
     main()
