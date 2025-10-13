@@ -70,7 +70,7 @@ def build_knowledge_graph(text: str, chunk_size: int, chunk_overlap: int) -> dic
     Args:
         text (str): Input text to analyze
         chunk_size (int): Size of text chunk for processing
-        chunk_overlap (int): Overlap between text chunk
+        chunk_overlap (int): Overlap between text chunks
         
     Returns:
         dict: Structured knowledge graph data
@@ -153,6 +153,7 @@ def build_knowledge_graph(text: str, chunk_size: int, chunk_overlap: int) -> dic
         
     except Exception as e:
         st.error(f"Error building knowledge graph: {e}")
+        st.exception(e)  # Show full traceback in Streamlit
         return {"nodes": [], "edges": []}
 
 
@@ -169,17 +170,53 @@ def visualize_graph(graph_data: dict) -> str:
     try:
         net = Network(notebook=False, height="500px", width="100%", directed=True)
         
-        # Add nodes
+        # Define color palette for different entity types
+        color_palette = {
+            "Author": "#FF6B6B",  # Red
+            "Organization": "#4ECDC4",  # Teal
+            "Location": "#45B7D1",  # Blue
+            "Concept": "#96CEB4",  # Green
+            "Person": "#FFEEAD",  # Yellow
+            "Technology": "#FF9A8B",  # Orange
+            "default": "#8884d8"  # Default color
+        }
+        
+        # Add nodes with colors based on entity type
         for node in graph_data.get("nodes", []):
-            net.add_node(node["id"], label=node["label"])
+            # Extract entity type from label (format: "Type: Name")
+            if ":" in node["label"]:
+                entity_type, entity_name = node["label"].split(":", 1)
+                entity_type = entity_type.strip()
+                entity_name = entity_name.strip()
+                node["label"] = entity_name  # Remove type from display label
+            else:
+                entity_type = "default"
+                entity_name = node["label"]
+                
+            # Get color based on entity type
+            color = color_palette.get(entity_type, color_palette["default"])
+            
+            net.add_node(
+                node["id"], 
+                label=entity_name,
+                color=color
+            )
             
         # Add edges
         for edge in graph_data.get("edges", []):
-            # Check if both nodes exist before adding edge
-            if net.get_node(edge["source"]) and net.get_node(edge["target"]):
-                net.add_edge(edge["source"], edge["target"], label=edge.get("label", ""))
-            else:
-                st.warning(f"Skipping edge with non-existent node: {edge}")
+            try:
+                if net.get_node(edge["source"]) and net.get_node(edge["target"]):
+                    net.add_edge(
+                        edge["source"], 
+                        edge["target"], 
+                        label=edge.get("label", ""),
+                        color="#999"
+                    )
+                else:
+                    st.warning(f"Skipping edge with non-existent node: {edge}")
+            except KeyError as ke:
+                st.warning(f"KeyError in visualization: {ke}. Skipping edge: {edge}")
+                continue
                 
         # Generate full HTML with all dependencies
         html_content = net.generate_html()
@@ -188,6 +225,7 @@ def visualize_graph(graph_data: dict) -> str:
         
     except Exception as e:
         st.error(f"Error visualizing graph: {e}")
+        st.exception(e)  # Show full traceback in Streamlit
         return ""
 
 
