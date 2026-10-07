@@ -1,0 +1,2 @@
+Title,Authors,Abstract,Citation Details,PDF_URL
+Attention Is All You Need,Ashish Vaswani; Noam Shazeer; Niki Parmar,"The dominant sequence transduction models are based on complex recurrent or convolutional neural networks. We propose the Transformer, a model architecture relying solely on attention mechanisms.",2017,https://arxiv.org/pdf/1706.03762.pdf
