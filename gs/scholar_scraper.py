@@ -94,6 +94,30 @@ def extract_year_from_text(text: str) -> str:
     return match.group(0) if match else ""
 
 
+def parse_citation(text: str) -> tuple[str, str]:
+    """Parse a citation text block to extract the year and publication name.
+
+    Google Scholar citation blocks usually follow the form:
+        "Author A, Author B - 2021 - Journal Name - Publisher - ..."
+    """
+    text = clean_text(text)
+    if not text:
+        return "", ""
+    parts = [p.strip() for p in re.split(r"\s+-\s+", text) if p.strip()]
+
+    year = ""
+    publication = ""
+    for i, part in enumerate(parts):
+        y = extract_year_from_text(part)
+        if y and not year:
+            year = y
+            if i + 1 < len(parts):
+                publication = clean_text(" - ".join(parts[i + 1:]))
+            break
+
+    return year, publication
+
+
 def find_pdf_url(soup: BeautifulSoup, source_url: str) -> str:
     if source_url.lower().endswith(".pdf"):
         return source_url
@@ -144,14 +168,21 @@ def extract_record_from_html(html: str | BeautifulSoup, source_url: str) -> dict
     )
     abstract = clean_text(abstract_tag.get_text(" ", strip=True) if abstract_tag else "")
 
-    # Citation details / year
+    # Citation details / year / publication
     year_tag = soup.select_one(".gs_cit, .gs_fl, div.gs_cits")
     year_text = clean_text(year_tag.get_text(" ", strip=True) if year_tag else "")
-    citation_details = extract_year_from_text(citation_text) or extract_year_from_text(year_text)
-    if not citation_details:
-        citation_details = extract_year_from_text(abstract)
-    if not citation_details:
-        citation_details = clean_text(author_text)
+    citation_year, publication = parse_citation(citation_text)
+    if not citation_year:
+        citation_year = (
+            extract_year_from_text(citation_text)
+            or extract_year_from_text(year_text)
+            or extract_year_from_text(abstract)
+            or ""
+        )
+    if not publication:
+        publication = citation_text
+
+    citation_details = publication if publication else citation_year
 
     pdf_url = find_pdf_url(soup, source_url)
 
@@ -159,6 +190,8 @@ def extract_record_from_html(html: str | BeautifulSoup, source_url: str) -> dict
         "title": title,
         "authors": authors,
         "abstract": abstract,
+        "publication": publication,
+        "year": citation_year,
         "citation_details": citation_details,
         "pdf_url": pdf_url,
     }
@@ -174,7 +207,14 @@ def parse_html_records(html: str | BeautifulSoup, source_url: str, keyword: str 
         record = extract_record_from_html(item, source_url)
         if not record["title"]:
             continue
-        if keyword and keyword.lower() not in " ".join([record["title"], record["abstract"]]).lower():
+        if keyword and keyword.lower() not in " ".join(
+            [
+                record["title"],
+                record["abstract"],
+                record.get("publication", ""),
+                record.get("year", ""),
+            ]
+        ).lower():
             continue
         records.append(record)
 
@@ -252,7 +292,7 @@ def fetch_records_from_url(
 
 
 def write_csv(records: Iterable[dict], output_path: str) -> None:
-    fieldnames = ["Title", "Authors", "Abstract", "Citation Details", "PDF_URL"]
+    fieldnames = ["Title", "Authors", "Abstract", "Publication", "Year", "Citation Details", "PDF_URL"]
     with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
@@ -262,6 +302,8 @@ def write_csv(records: Iterable[dict], output_path: str) -> None:
                     "Title": record.get("title", ""),
                     "Authors": "; ".join(record.get("authors", [])),
                     "Abstract": record.get("abstract", ""),
+                    "Publication": record.get("publication", ""),
+                    "Year": record.get("year", ""),
                     "Citation Details": record.get("citation_details", ""),
                     "PDF_URL": record.get("pdf_url", ""),
                 }
