@@ -249,7 +249,7 @@ def _extract_bibtex_value(part: str) -> Tuple[str, str]:
 def parse_bibtex_record(text: str) -> Dict[str, str]:
     """Parse a BibTeX entry into structured fields."""
     result: Dict[str, str] = {"authors": [], "title": "", "journal": "", "year": "",
-                               "volume": "", "number": "", "pages": "", "doi": "", "url": ""}
+                               "volume": "", "number": "", "pages": "", "doi": "", "url": "", "eprint": ""}
     m = re.search(r"@(\w+)\s*\{\s*([^,]+),\s*(.*?)\s*\}\s*$", text, re.S | re.I)
     if not m:
         return result
@@ -278,6 +278,8 @@ def parse_bibtex_record(text: str) -> Dict[str, str]:
             result["doi"] = value
         elif name == "url":
             result["url"] = value
+        elif name == "eprint" or name == "primary":
+            result["eprint"] = value
         elif name == "publisher":
             result["publisher"] = value
         elif name == "abstract":
@@ -288,14 +290,27 @@ def parse_bibtex_record(text: str) -> Dict[str, str]:
 def parse_apa_citation(text: str) -> Dict[str, str]:
     """Best-effort parse of an APA-style plain-text citation."""
     result: Dict[str, str] = {"authors": [], "title": "", "journal": "", "year": "",
-                               "volume": "", "number": "", "pages": "", "doi": "", "url": ""}
+                               "volume": "", "number": "", "pages": "", "doi": "", "url": "", "eprint": ""}
     line = clean_text(text)
     if not line:
         return result
 
+    # Extract DOI (plain, dx.doi.org, or https URL variants).
     doi_match = re.search(r"doi[:.]?\s*(\S+)|dx\.doi\.org/(\S+)|\bhttps?://\S+doi\w*\/?\S*", line, re.I)
     if doi_match:
         result["doi"] = clean_text(doi_match.group(0) or doi_match.group(1) or "")
+
+    # Extract arXiv ID (e.g., arXiv:2408.13296, arXiv:2408.13296v1, or 2408.13296).
+    arxiv_match = re.search(
+        r"\b(arxiv[:.\s-]+)?\s*(\d{4}\.\d{4,}(?:v\d+)?)(?!\d)",
+        line,
+        re.I,
+    )
+    if arxiv_match:
+        # Prefer the normalized form "arXiv:2408.13296".
+        arxiv = arxiv_match.group(0).strip()
+        result["eprint"] = clean_text(arxiv)
+
     if not result["doi"]:
         url_match = re.search(r"https?://\S+", line)
         if url_match:
@@ -400,6 +415,8 @@ def _merge_citation(record: Dict[str, str], cit: Dict[str, str]) -> None:
         record["doi_url"] = cit["url"]
     if cit.get("publisher"):
         record["publisher"] = cit["publisher"]
+    if cit.get("eprint"):
+        record["eprint"] = cit["eprint"]
     if not record.get("abstract") and cit.get("abstract"):
         record["abstract"] = clean_text(cit["abstract"])
 
@@ -454,6 +471,7 @@ def enrich_record(record: Dict[str, str], source_url: str) -> Dict[str, str]:
     clean["doi"] = sanitize_bibtex_field(record.get("doi", ""))
     clean["doi_url"] = sanitize_bibtex_field(record.get("doi_url", ""))
     clean["publisher"] = sanitize_bibtex_field(record.get("publisher", ""))
+    clean["eprint"] = sanitize_bibtex_field(record.get("eprint", ""))
 
     if " - " in clean["citation_details"]:
         parts = [p.strip() for p in clean["citation_details"].split(" - ", 1)]
@@ -522,7 +540,7 @@ def parse_html_records(
         page_inline.append(inline)
         parsed_records.extend(_parse_page_records(html, source_url, keyword, progress))
 
-    # Fetch rich citation data (publication, DOI, pages, volume, issue, URL, etc.) from Google
+    # Fetch rich citation data (publication, DOI, pages, volume, issue, URL, eprint, etc.) from Google
     # Scholar's dedicated 'cite' endpoint, using each record's cluster and cite IDs.
     cite_tqdm = tqdm(
         enumerate(parsed_records), disable=not progress,
@@ -706,6 +724,8 @@ def extract_record_from_html(html: str | BeautifulSoup, source_url: str) -> dict
 
 
 def entry_type(record: Dict[str, str]) -> str:
+    if record.get("eprint"):
+        return "misc"
     if record.get("publication"):
         return "article"
     if record.get("publisher"):
@@ -722,6 +742,7 @@ def record_to_bibtex(rec_id: int, record: Dict[str, str]) -> str:
     doi = record.get("doi") or record.get("doi_url") or ""
     pdf_url = record.get("pdf_url", "")
     year = record.get("year", "")
+    eprint = record.get("eprint", "")
 
     atype = entry_type(record)
     if not pub and not pdf_url:
@@ -753,6 +774,8 @@ def record_to_bibtex(rec_id: int, record: Dict[str, str]) -> str:
         lines.append(f"  pages = {{{record['pages']}}},")
     if doi:
         lines.append(f"  doi = {{{doi}}},")
+    if eprint:
+        lines.append(f"  eprint = {{{eprint}}},")
 
     cite_urls = [doi, pdf_url]
     if record.get("doi_url") and record["doi_url"] not in cite_urls:
@@ -773,6 +796,7 @@ def record_to_bibtex(rec_id: int, record: Dict[str, str]) -> str:
     if note_parts:
         lines.append("  note = {" + "; ".join(note_parts) + "},")
 
+    lines.append("}")
     return "\n".join(lines) + "\n"
 
 
