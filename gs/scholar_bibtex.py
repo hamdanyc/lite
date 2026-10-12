@@ -113,250 +113,128 @@ def parse_citation(text: str) -> Tuple[str, str]:
     return year, publication
 
 
-def extract_cite_ids(html: str | BeautifulSoup, source_url: str) -> Tuple[str, str]:
-    """Extract Google Scholar cite ID and cluster ID from a result row HTML."""
-    if isinstance(html, str):
-        soup = BeautifulSoup(html, "html.parser")
-    elif hasattr(html, "select_one"):
-        soup = html
-    else:
-        soup = BeautifulSoup(str(html), "html.parser")
-
-    cite_id = ""
-    cluster_id = ""
-
-    # The title link often carries the cluster/scid parameters.
-    title_link = soup.select_one(".gs_rt a.gs_rl, .gs_rt a.gs_title, .gs_rt a.gs_tr")
-    if not title_link:
-        title_link = soup.select_one(".gs_rt a")
-    if title_link and title_link.get("href"):
-        params = dict(re.findall(r"(\w+)=(\S+?)(?:&|$)", title_link["href"]))
-        cluster_id = params.get("cluster") or params.get("scid") or ""
-
-    # The "Cite" link inside .gs_a carries the cite=ID parameter.
-    gs_a = soup.select_one(".gs_a")
-    if gs_a:
-        for a in gs_a.find_all("a"):
-            href = a.get("href") or ""
-            text = clean_text(a.get_text(" ", strip=True))
-            if "cites=" in href and "cite" in text.lower():
-                params = dict(re.findall(r"(\w+)=(\S+?)(?:&|$)", href))
-                cite_id = params.get("cites") or ""
-                break
-
-    return cite_id, cluster_id
+def _parse_bibtex_field(text: str) -> str:
+    """Extract field value from a BibTeX field line, handling quoted/braced values."""
+    text = text.strip()
+    if text.startswith("{") and text.endswith("}"):
+        return text[1:-1]
+    if text.startswith('"') and text.endswith('"'):
+        return text[1:-1]
+    return text.strip().rstrip("}")
 
 
-def fetch_citation_text(cite_id: str, cluster_id: str, session: requests.Session, timeout: float = 30.0) -> str | None:
-    """Fetch the full citation (BibTeX/plain-text) for a record from Google Scholar's cite endpoint."""
-    if not cite_id or not cluster_id:
-        return None
-    url = (
-        f"https://scholar.googleusercontent.com/scholar.bib?"
-        f"cluster={quote(cluster_id, safe='')}&hl=en&cites={quote(cite_id, safe='')}&num=10"
-    )
-    headers = {
-        "User-Agent": HEADERS["User-Agent"],
-        "Accept": "text/plain,*/*",
-    }
-    last_error: Exception | None = None
-    for attempt in range(2):
-        try:
-            response = session.get(url, headers=headers, timeout=timeout)
-            response.raise_for_status()
-            text = clean_text(response.text)
-            if not text:
-                continue
-            if text.lstrip().startswith("@"):
-                # Valid BibTeX entry.
-                return text
-            if re.search(r"\b(19|20)\d{2}\b", text) and ("doi" in text.lower() or "journal" in text.lower() or "@" in text):
-                # Plain citation text that contains a year and citation markers.
-                return text
-        except requests.RequestException as exc:
-            last_error = exc
-            time.sleep(1)
-        except Exception as exc:
-            last_error = exc
-            time.sleep(1)
-    if last_error:
-        print(f"  Warning: failed to fetch citation (cite={cite_id[:10]} cluster={cluster_id[:10]}): {last_error}")
-    return None
+def _extract_bibtex_author(block: str) -> List[str]:
+    """Extract an author list from a BibTeX entry block."""
+    authors: List[str] = []
+    for line in block.splitlines():
+        m = re.match(
+            r"\s*author\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')",
+            line,
+            re.I,
+        )
+        if m:
+            value = m.group(1) or m.group(2) or m.group(3) or ""
+            authors = parse_authors(value)
+            break
+    return authors
 
 
-def _split_top_level(s: str) -> List[str]:
-    """Split a BibTeX field list at commas that are not inside braces/quotes."""
-    parts = []
-    depth = 0
-    in_string = False
-    string_char: str | None = None
-    start = 0
-    i = 0
-    while i < len(s):
-        ch = s[i]
-        if in_string:
-            if ch == string_char:
-                in_string = False
-            i += 1
-            continue
-        if ch in ('"', "'"):
-            in_string = True
-            string_char = ch
-            i += 1
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            parts.append(s[start:i].strip())
-            start = i + 1
-        i += 1
-    parts.append(s[start:].strip())
-    return [p for p in parts if p]
+def parse_bibtex_record(raw: str) -> Dict[str, str]:
+    """Parse a BibTeX entry into a normalized citation dict."""
+    out: Dict[str, str] = {}
+
+    raw = clean_text(raw)
+    if not raw.lstrip().startswith("@"):
+        return out
+
+    atype = re.search(r"^@\{(\w+)", raw)
+    out["type"] = atype.group(1).lower() if atype else "misc"
+
+    out["authors"] = _extract_bibtex_author(raw)
+
+    for key, pattern in [
+        ("title", r"title\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("journal", r"journal\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("publisher", r"publisher\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("year", r"year\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("volume", r"volume\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("number", r"number\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("pages", r"pages\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("doi", r"doi\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("url", r"url\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("eprint", r"(?:eprint|arxiv)\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+        ("abstract", r"abstract\s*=\s*(?:\{([^{}]*)\}|\"([^\"]*)\"|'([^']*)')"),
+    ]:
+        m = re.search(pattern, raw, re.I | re.S)
+        if m:
+            value = m.group(1) or m.group(2) or m.group(3) or ""
+            value = _strip_gscholar_citation_markers(clean_text(value))
+            if value:
+                out[key] = value
+
+    return out
 
 
-def _extract_bibtex_value(part: str) -> Tuple[str, str]:
-    """Parse a BibTeX field 'name = value' into (name, value)."""
-    m = re.match(r"(\w+)\s*=\s*", part)
-    if not m:
-        return "", ""
-    name = m.group(1).lower()
-    rest = part[m.end():].strip()
-    if rest.startswith("{"):
-        depth = 0
-        end = 0
-        for i, ch in enumerate(rest):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        value = rest[1:end - 1]
-    elif rest.startswith('"'):
-        end = rest.find('"', 1)
-        value = rest[1:end] if end != -1 else rest[1:]
-    elif rest.startswith("#"):
-        # Ignore BibTeX concatenation expressions for robustness.
-        value = ""
-    else:
-        value = rest
-    return name, value
+def parse_apa_citation(raw: str) -> Dict[str, str]:
+    """Parse a plain-text citation (APA-ish style) into a normalized citation dict."""
+    out: Dict[str, str] = {}
+    text = clean_text(raw)
+    if not text:
+        return out
 
+    # Authors: everything before the first year-like token.
+    author_match = re.match(r"^([^()]+?)\s+(?:\(\d{4}\)|\d{4})", text)
+    if author_match:
+        out["authors"] = parse_authors(author_match.group(1).strip())
 
-def parse_bibtex_record(text: str) -> Dict[str, str]:
-    """Parse a BibTeX entry into structured fields."""
-    result: Dict[str, str] = {"authors": [], "title": "", "journal": "", "year": "",
-                               "volume": "", "number": "", "pages": "", "doi": "", "url": "", "eprint": ""}
-    m = re.search(r"@(\w+)\s*\{\s*([^,]+),\s*(.*?)\s*\}\s*$", text, re.S | re.I)
-    if not m:
-        return result
-    block = m.group(3)
-    for part in _split_top_level(block):
-        name, value = _extract_bibtex_value(part)
-        if not name:
-            continue
-        value = clean_text(value.replace("\\", "")).strip()
-        if name == "author":
-            result["authors"] = [a.strip() for a in value.split(" and ") if a.strip()]
-        elif name == "title":
-            result["title"] = value
-        elif name == "journal" or name == "journaltitle":
-            result["journal"] = value
-        elif name == "year":
-            y = re.sub(r"\D", "", value)
-            result["year"] = y if y else value
-        elif name == "volume":
-            result["volume"] = value
-        elif name == "number" or name == "issue":
-            result["number"] = value
-        elif name == "pages":
-            result["pages"] = value
-        elif name == "doi":
-            result["doi"] = value
-        elif name == "url":
-            result["url"] = value
-        elif name == "eprint" or name == "primary":
-            result["eprint"] = value
-        elif name == "publisher":
-            result["publisher"] = value
-        elif name == "abstract":
-            result["abstract"] = value
-    return result
+    # Year: first 4-digit year found.
+    year_match = re.search(r"\((\d{4})\)", text)
+    year = year_match.group(1) if year_match else extract_year_from_text(text)
+    if year:
+        out["year"] = year
 
+    # Title: between the year and the publication info.
+    title_part = text.split(year)[-1] if year else text
+    pub_tokens = ["journal", "published in", "in ", "Proceedings of", "conference", "book", "Press"]
+    title_end = None
+    for tok in pub_tokens:
+        idx = title_part.lower().find(tok)
+        if idx != -1:
+            title_end = idx
+            break
+    title = title_part[:title_end].strip() if title_end is not None else title_part.strip()
+    if title:
+        out["title"] = _strip_gscholar_citation_markers(title)
 
-def parse_apa_citation(text: str) -> Dict[str, str]:
-    """Best-effort parse of an APA-style plain-text citation."""
-    result: Dict[str, str] = {"authors": [], "title": "", "journal": "", "year": "",
-                               "volume": "", "number": "", "pages": "", "doi": "", "url": "", "eprint": ""}
-    line = clean_text(text)
-    if not line:
-        return result
+    # Publication: what follows the title.
+    if title_end is not None and title_end < len(title_part):
+        pub = title_part[title_end:].strip().strip(" ()")
+        pub = re.sub(r"^\d{4}\.", "", pub)
+        if pub:
+            out["journal"] = _strip_gscholar_citation_markers(clean_text(pub))
 
-    # Extract DOI (plain, dx.doi.org, or https URL variants).
-    doi_match = re.search(r"doi[:.]?\s*(\S+)|dx\.doi\.org/(\S+)|\bhttps?://\S+doi\w*\/?\S*", line, re.I)
+    # DOI.
+    doi_match = re.search(r"(?:doi)[:\s]*([0-9a-zA-Z./%-]+)", text)
     if doi_match:
-        result["doi"] = clean_text(doi_match.group(0) or doi_match.group(1) or "")
+        out["doi"] = clean_text(doi_match.group(1)).replace("http://doi.org/", "").replace("https://doi.org/", "")
 
-    # Extract arXiv ID (e.g., arXiv:2408.13296, arXiv:2408.13296v1, or 2408.13296).
-    arxiv_match = re.search(
-        r"\b(arxiv[:.\s-]+)?\s*(\d{4}\.\d{4,}(?:v\d+)?)(?!\d)",
-        line,
-        re.I,
-    )
-    if arxiv_match:
-        # Prefer the normalized form "arXiv:2408.13296".
-        arxiv = arxiv_match.group(0).strip()
-        result["eprint"] = clean_text(arxiv)
+    # URL.
+    url_match = re.search(r"https?://[^\s<>(){}|\\^`[\]]+", text)
+    if url_match:
+        out["url"] = url_match.group(0).strip()
 
-    if not result["doi"]:
-        url_match = re.search(r"https?://\S+", line)
-        if url_match:
-            result["url"] = clean_text(url_match.group(0))
-
-    year_match = re.search(r"\((\d{4})\)\s*\.?\s*([^.,])", line)
-    if year_match:
-        result["year"] = year_match.group(1)
-        body = line[year_match.end():].strip()
-    else:
-        body = re.sub(r"\s*\(\d{4}\)\s*", " ", line)
-
-    first_period = body.find(".")
-    if first_period != -1:
-        authors_str = body[:first_period].strip()
-        body = body[first_period + 1:].strip()
-        authors_str = re.sub(r"\s+(?:and|&|,\s*and)\s+", "; ", authors_str, flags=re.I)
-        result["authors"] = [a.strip() for a in authors_str.split("; ") if a.strip()]
-
-    title_match = re.match(r"^(?:\"|')?(.+?)(?:\"|')?\.\s*$", body, re.S | re.I)
-    if title_match:
-        result["title"] = clean_text(title_match.group(1))
-        rest = body[title_match.end():].strip()
-    else:
-        rest = body
-
-    journal_match = re.match(r"^([^,]+),", rest)
-    if journal_match:
-        result["journal"] = clean_text(journal_match.group(1))
-        rest = rest[journal_match.end():].strip()
-
-    vol_match = re.search(r"vol\.?\s*(\d+)", rest, re.I)
+    # Volume/issue/pages from common patterns near the publication.
+    vol_match = re.search(r"volume\s*(\d+)", text)
     if vol_match:
-        result["volume"] = vol_match.group(1)
-        rest = rest[vol_match.end():].strip()
+        out["volume"] = clean_text(vol_match.group(1))
+    issue_match = re.search(r"issue\s*(?:no\.?|num\.?)?\s*(\d+)", text)
+    if issue_match:
+        out["number"] = clean_text(issue_match.group(1))
+    pages_match = re.search(r"\b(?:pp\.|p\.|pages?)?\s*([\d,\-]+)\b", text)
+    if pages_match:
+        out["pages"] = clean_text(pages_match.group(1))
 
-    num_match = re.search(r"no\.?\s*(\d+)|\((\d+)\)", rest, re.I)
-    if num_match:
-        result["number"] = clean_text(num_match.group(1) or num_match.group(2) or "")
-        rest = rest[num_match.end():].strip()
-
-    pp_match = re.search(r"pp\.?\s*([^-]+)", rest, re.I) or re.search(r"pp?\.\s*([^.]+)", rest, re.I)
-    if pp_match:
-        result["pages"] = clean_text(pp_match.group(1)).rstrip(".,")
-
-    return result
+    return out
 
 
 def parse_citation_content(raw: str) -> Dict[str, str]:
@@ -393,6 +271,224 @@ def _strip_gscholar_citation_markers(text: str) -> str:
     return clean_text(text)
 
 
+def extract_cite_ids(html: str | BeautifulSoup, source_url: str) -> Tuple[str, str]:
+    """Extract Google Scholar cite ID and cluster ID from a result row HTML.
+
+    Handles both the legacy format (title link with cluster/scid params, and
+    a ".gs_a" element with a "Cite" link carrying cites=ID) and the newer
+    HTML schema used by Google Scholar, where result rows carry their own
+    record identifiers in data attributes (data-cid / data-did / data-aid)
+    and numeric cluster/cites IDs appear in result-action links.
+    """
+    if isinstance(html, str):
+        soup = BeautifulSoup(html, "html.parser")
+    elif hasattr(html, "select_one"):
+        soup = html
+    else:
+        soup = BeautifulSoup(str(html), "html.parser")
+
+    cite_id = ""
+    cluster_id = ""
+
+    # Newer HTML schema: the result row carries its own record identifiers.
+    # data-cid / data-did / data-aid all hold the record's unique ID in this schema.
+    row = soup.select_one(".gs_or") or soup.select_one(".gs_r")
+    if row:
+        cite_id = cite_id or (row.get("data-cid") or row.get("data-did") or row.get("data-aid") or "")
+        cluster_id = cluster_id or (row.get("data-cid") or row.get("data-did") or row.get("data-aid") or "")
+
+    # Newer HTML schema: numeric cluster/cites IDs appear in result-action
+    # links such as "Cited by N" (cites=NUMERIC) and "All N versions" (cluster=NUMERIC).
+    if not cluster_id:
+        for a in soup.select("a"):
+            href = a.get("href") or ""
+            if not href:
+                continue
+            if "cluster=" in href:
+                cluster_id = dict(re.findall(r"(\w+)=(\S+?)(?:&|$)", href)).get("cluster") or cluster_id
+            elif "cites=" in href and "related" not in href:
+                cluster_id = dict(re.findall(r"(\w+)=(\S+?)(?:&|$)", href)).get("cites") or cluster_id
+
+    # Legacy format: the title link often carries the cluster/scid parameters.
+    if not cluster_id:
+        title_link = soup.select_one(".gs_rt a.gs_rl, .gs_rt a.gs_title, .gs_rt a.gs_tr")
+        if not title_link:
+            title_link = soup.select_one(".gs_rt a")
+        if title_link and title_link.get("href"):
+            params = dict(re.findall(r"(\w+)=(\S+?)(?:&|$)", title_link["href"]))
+            cluster_id = params.get("cluster") or params.get("scid") or ""
+
+    # Legacy format: the "Cite" link inside .gs_a carries the cites=ID parameter.
+    if not cite_id:
+        gs_a = soup.select_one(".gs_a")
+        if gs_a:
+            for a in gs_a.find_all("a"):
+                href = a.get("href") or ""
+                text = clean_text(a.get_text(" ", strip=True))
+                if "cites=" in href and "cite" in text.lower():
+                    params = dict(re.findall(r"(\w+)=(\S+?)(?:&|$)", href))
+                    cite_id = params.get("cites") or ""
+                    break
+
+    return cite_id, cluster_id
+
+
+def fetch_citation_text(
+    cite_id: str,
+    cluster_id: str,
+    session: requests.Session,
+    timeout: float = 30.0,
+    page_param: str = "0",
+    source_url: str = "",
+) -> str | None:
+    """Fetch the full citation (BibTeX/plain-text) for a record from Google Scholar.
+
+    Supports both the legacy numeric cite/cluster IDs (scholar.bib endpoint)
+    and the newer alphanumeric record IDs carried in result-row data
+    attributes (data-cid / data-did / data-aid) via the info-cite dialog page.
+    """
+    if not cite_id:
+        return None
+
+    headers = {
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "text/plain,*/*",
+    }
+
+    # Strategy 1: legacy scholar.bib endpoint with cluster + cites IDs.
+    # Works when cluster_id is available (legacy numeric IDs, or the numeric
+    # cluster/cites values found in result-action links).
+    if cluster_id:
+        url = (
+            f"https://scholar.googleusercontent.com/scholar.bib?"
+            f"cluster={quote(cluster_id, safe='')}&hl=en&cites={quote(cite_id, safe='')}&num=10"
+        )
+        text = _fetch_citation_url(url, headers, session, timeout)
+        if text:
+            return text
+
+    # Strategy 2: newer info-cite dialog page. Google Scholar renders the
+    # citation text (and a "Download .bib" link) inside this page for records
+    # identified by the alphanumeric ID carried in data-cid / data-did.
+    info_url = (
+        f"https://scholar.google.com/scholar?q=info:{quote(cite_id, safe='')}"
+        f":scholar.google.com/&output=cite&scirp={quote(page_param, safe='')}&hl=en"
+    )
+    dialog_html = _fetch_dialog_html(info_url, headers, session, timeout)
+    if dialog_html:
+        text = _parse_dialog_citations(dialog_html, timeout)
+        if text:
+            return text
+
+    if cluster_id:
+        print(
+            f"  Warning: failed to fetch citation for record {cite_id[:10]} "
+            f"with cluster {cluster_id[:10]}. Continuing without citation data.",
+        )
+    return None
+
+
+def _fetch_citation_url(
+    url: str,
+    headers: Dict[str, str],
+    session: requests.Session | None,
+    timeout: float,
+) -> str | None:
+    """Fetch a scholar.bib-style URL and validate the returned citation text."""
+    use_own = session is None
+    if use_own:
+        session = requests.Session()
+        session.headers.update(headers)
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            response = session.get(url, headers={} if use_own else headers, timeout=timeout)
+            response.raise_for_status()
+            text = clean_text(response.text)
+            if not text:
+                time.sleep(1)
+                continue
+            if text.lstrip().startswith("@"):
+                # Valid BibTeX entry.
+                return text
+            if re.search(r"\b(19|20)\d{2}\b", text) and ("doi" in text.lower() or "journal" in text.lower() or "@" in text):
+                # Plain citation text that contains a year and citation markers.
+                return text
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt < 1:
+                time.sleep(1)
+        except Exception as exc:
+            last_error = exc
+            if attempt < 1:
+                time.sleep(1)
+    return None
+
+
+def _fetch_dialog_html(url: str, headers: Dict[str, str], session: requests.Session, timeout: float) -> str | None:
+    """Fetch the Google Scholar info-cite dialog page (an HTML page)."""
+    dial_headers = dict(headers)
+    dial_headers["Accept"] = "text/html,application/xhtml+xml"
+    try:
+        response = session.get(url, headers=dial_headers, timeout=timeout)
+        response.raise_for_status()
+        return response.text
+    except Exception:
+        return None
+
+
+def _parse_dialog_citations(dialog_html: str, timeout: float) -> str | None:
+    """Extract a BibTeX citation from an info-cite dialog HTML page.
+
+    The dialog may contain static citation blocks (".gs_cit") or, in some
+    renderings, embed the raw BibTeX text directly. A "Download .bib" link
+    inside the dialog is also followed if no citation text is found.
+    """
+    text = clean_text(dialog_html)
+    if text.lstrip().startswith("@"):
+        return text
+
+    soup = BeautifulSoup(dialog_html, "html.parser")
+
+    blocks: List[str] = []
+    for el in soup.select(".gs_cit, .gsc_cit"):
+        block = clean_text(el.get_text(" ", strip=True))
+        if block.lstrip().startswith("@"):
+            blocks.append(block)
+
+    if blocks:
+        return blocks[0]
+
+    # Fallback: any citation block text at all.
+    for el in soup.select(".gs_cit, .gsc_cit"):
+        block = clean_text(el.get_text(" ", strip=True))
+        if block:
+            return block
+
+    # Fallback: follow a "Download .bib" link inside the dialog.
+    bib_url: str | None = None
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "scholar.bib" in href:
+            bib_url = href
+            break
+        if "Download .bib" in (a.get_text(" ", strip=True) or "") or "gs_btnDWL" in (a.get("class") or []):
+            bib_url = href
+
+    if bib_url and not bib_url.startswith(("http://", "https://")):
+        bib_url = urljoin("https://scholar.google.com", bib_url)
+
+    if bib_url:
+        return _fetch_citation_url(
+            bib_url,
+            {"User-Agent": HEADERS["User-Agent"], "Accept": "text/plain,*/*"},
+            None,
+            timeout,
+        )
+
+    return None
+
+
 def _merge_citation(record: Dict[str, str], cit: Dict[str, str]) -> None:
     """Merge citation-parsed fields into a record (citation data is the primary source)."""
     if cit.get("authors"):
@@ -418,7 +514,7 @@ def _merge_citation(record: Dict[str, str], cit: Dict[str, str]) -> None:
     if cit.get("eprint"):
         record["eprint"] = cit["eprint"]
     if not record.get("abstract") and cit.get("abstract"):
-        record["abstract"] = clean_text(cit["abstract"])
+        record["abstract"] = _strip_gscholar_citation_markers(clean_text(cit["abstract"]))
 
 
 def format_author_for_bibtex(full_name: str) -> str:
@@ -523,7 +619,7 @@ def parse_html_records(
     citation_timeout: float = 30.0,
     citations_limit: int = 200,
 ) -> List[dict]:
-    """Parse all records from one or more Google Scholar HTML pages/soups.
+    """Parse all records from one or more Google Scholar pages/soups.
 
     html_sources: list of (html_string_or_soup, source_url) tuples.
     citations_limit: maximum number of records that get their citation data
@@ -677,6 +773,9 @@ def extract_record_from_html(html: str | BeautifulSoup, source_url: str) -> dict
                 break
 
     title = clean_text(title_tag.get_text(" ", strip=True) if title_tag else "")
+    # Remove Google Scholar citation markers such as [HTML], [PDF], [BIBTEX], [EXPORT], [CITATION]
+    # that sometimes appear in front of the title in the HTML.
+    title = _strip_gscholar_citation_markers(title)
 
     # Authors
     author_block = soup.select_one(".gs_a, td.gs_tde, div.gs_cits")
@@ -693,6 +792,9 @@ def extract_record_from_html(html: str | BeautifulSoup, source_url: str) -> dict
         ".gs_rs, .gs_ab_md, .gs_ab, .gs_md, .gs_ri .gs_ab, .gs_rt"
     )
     abstract = clean_text(abstract_tag.get_text(" ", strip=True) if abstract_tag else "")
+    # Remove Google Scholar citation markers such as [HTML], [PDF], [BIBTEX], [EXPORT], [CITATION]
+    # that sometimes appear in the abstract preview.
+    abstract = _strip_gscholar_citation_markers(abstract)
 
     # Citation details / year / publication
     year_tag = soup.select_one(".gs_cit, .gs_fl, div.gs_cits")
@@ -789,9 +891,9 @@ def record_to_bibtex(rec_id: int, record: Dict[str, str]) -> str:
         abs_preview = record["abstract"][:150]
         if len(record["abstract"]) > 150:
             abs_preview += "..."
-        note_parts.append(f"Abstract: {abs_preview}")
+        note_parts.append(f"Abstract: {_strip_gscholar_citation_markers(abs_preview)}")
     if record.get("citation_details"):
-        note_parts.append(f"Source: {record['citation_details']}")
+        note_parts.append(f"Source: {_strip_gscholar_citation_markers(record['citation_details'])}")
 
     if note_parts:
         lines.append("  note = {" + "; ".join(note_parts) + "},")
