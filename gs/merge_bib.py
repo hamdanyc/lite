@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Merge Google Scholar and PDF BibTeX records into one bibliography."""
+"""Merge two BibTeX files by DOI."""
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 import re
-import unicodedata
-from typing import Dict, List, Optional, Tuple
+import sys
+from typing import Dict, List, Tuple
 
 import bibtexparser
 from bibtexparser.model import Entry, Field
@@ -20,10 +19,23 @@ class Record:
     fields: Dict[str, str]
 
 
+@dataclass
+class MergeSummary:
+    records_read: int
+    records_created: int = 0
+    records_updated: int = 0
+    records_deleted: int = 0
+    records_matched: int = 0
+
+
 def _read_bib(path: str):
     library = bibtexparser.parse_file(path)
     if library.failed_blocks:
-        raise ValueError(f"Could not parse all BibTeX content in {path}")
+        print(
+            f"Warning: skipped {len(library.failed_blocks)} malformed BibTeX "
+            f"block(s) in {path}",
+            file=sys.stderr,
+        )
     return library
 
 
@@ -50,59 +62,6 @@ def _normalize_doi(value: str) -> str:
     return doi.rstrip(" .;,")
 
 
-def _normalize_title(value: str) -> str:
-    title = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    title = re.sub(r"\\[a-zA-Z]+", " ", title).casefold()
-    title = re.sub(r"^\s*(?:\[(?:citation|c)\]\s*)+", " ", title)
-    title = re.sub(r"[^a-z0-9]+", " ", title)
-    return " ".join(title.split())
-
-
-def _match_record(candidate: Record, records: List[Record]) -> Optional[int]:
-    doi = _normalize_doi(candidate.fields.get("doi", ""))
-    if doi:
-        doi_matches = [
-            index for index, record in enumerate(records)
-            if _normalize_doi(record.fields.get("doi", "")) == doi
-        ]
-        if doi_matches:
-            title = _normalize_title(candidate.fields.get("title", ""))
-            return max(
-                doi_matches,
-                key=lambda index: SequenceMatcher(
-                    None, title, _normalize_title(records[index].fields.get("title", ""))
-                ).ratio(),
-            )
-
-    title = _normalize_title(candidate.fields.get("title", ""))
-    if not title:
-        return None
-
-    exact_matches = [
-        index for index, record in enumerate(records)
-        if _normalize_title(record.fields.get("title", "")) == title
-    ]
-    if exact_matches:
-        return exact_matches[0]
-
-    if len(title) < 25:
-        return None
-    similarities = sorted(
-        (
-            SequenceMatcher(None, title, _normalize_title(record.fields.get("title", ""))).ratio(),
-            index,
-        )
-        for index, record in enumerate(records)
-        if _normalize_title(record.fields.get("title", ""))
-    )
-    similarities.reverse()
-    if not similarities or similarities[0][0] < 0.94:
-        return None
-    if len(similarities) > 1 and similarities[0][0] - similarities[1][0] < 0.04:
-        return None
-    return similarities[0][1]
-
-
 def _unique_key(key: str, used_keys: set[str]) -> str:
     if key not in used_keys:
         return key
@@ -112,63 +71,103 @@ def _unique_key(key: str, used_keys: set[str]) -> str:
     return f"{key}_{suffix}"
 
 
-def merge_libraries(pdf_library, scholar_library) -> Tuple[object, int, int]:
-    """Merge records, returning the output library, match count, and appended count."""
-    records = [_record_from_entry(entry) for entry in pdf_library.entries]
+def merge_by_doi(primary_library, additional_library) -> Tuple[object, MergeSummary]:
+    """Merge records by normalized DOI, filling only fields missing from primary records."""
+    records: List[Record] = []
     used_keys: set[str] = set()
-    for record in records:
-        record.key = _unique_key(record.key, used_keys)
-        used_keys.add(record.key)
+    doi_indices: Dict[str, int] = {}
+    summary = MergeSummary(
+        records_read=len(primary_library.entries) + len(additional_library.entries)
+    )
+    updated_indices: set[int] = set()
 
-    matched = 0
-    appended = 0
-    for entry in scholar_library.entries:
-        scholar_record = _record_from_entry(entry)
-        match_index = _match_record(scholar_record, records)
-        if match_index is None:
-            scholar_record.key = _unique_key(scholar_record.key, used_keys)
-            used_keys.add(scholar_record.key)
-            records.append(scholar_record)
-            appended += 1
-            continue
+    for is_additional, library in (
+        (False, primary_library),
+        (True, additional_library),
+    ):
+        for entry in library.entries:
+            record = _record_from_entry(entry)
+            doi = _normalize_doi(record.fields.get("doi", ""))
+            match_index = doi_indices.get(doi) if doi else None
 
-        pdf_record = records[match_index]
-        for field, value in scholar_record.fields.items():
-            if value.strip() and not pdf_record.fields.get(field, "").strip():
-                pdf_record.fields[field] = value
-        matched += 1
+            if match_index is not None:
+                existing = records[match_index]
+                updated = False
+                for field, value in record.fields.items():
+                    if value.strip() and not existing.fields.get(field, "").strip():
+                        existing.fields[field] = value
+                        updated = True
+                if is_additional:
+                    summary.records_matched += 1
+                    if updated:
+                        updated_indices.add(match_index)
+                continue
 
-    blocks = [block for block in pdf_library.blocks if not isinstance(block, Entry)]
-    blocks.extend(
+            record.key = _unique_key(record.key, used_keys)
+            used_keys.add(record.key)
+            record_index = len(records)
+            records.append(record)
+            if doi:
+                doi_indices[doi] = record_index
+            if is_additional:
+                summary.records_created += 1
+
+    blocks = [
         Entry(
             record.entry_type,
             record.key,
             [Field(name, value) for name, value in record.fields.items()],
         )
         for record in records
-    )
-    return bibtexparser.Library(blocks=blocks), matched, appended
+    ]
+    summary.records_updated = len(updated_indices)
+    return bibtexparser.Library(blocks=blocks), summary
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Merge PDF BibTeX records with Google Scholar records."
+        description="Merge biblio.bib and biblio_add.bib by DOI."
     )
-    parser.add_argument("--pdf", default="from_pdfs.bib", help="PDF BibTeX input file")
-    parser.add_argument("--scholar", default="citations.bib", help="Scholar BibTeX input file")
-    parser.add_argument("--output", default="merge.bib", help="Merged BibTeX output file")
+    parser.add_argument(
+        "--primary",
+        default="biblio.bib",
+        help="primary BibTeX file (default: biblio.bib)",
+    )
+    parser.add_argument(
+        "--additional",
+        default="biblio_add.bib",
+        help="additional BibTeX file (default: biblio_add.bib)",
+    )
+    parser.add_argument(
+        "--output", default="bibliography.bib", help="synced bibliography output file"
+    )
+    parser.add_argument(
+        "--summary",
+        default="bibliography_summary.txt",
+        help="CRUD summary output file (default: bibliography_summary.txt)",
+    )
     args = parser.parse_args()
 
-    pdf_library = _read_bib(args.pdf)
-    scholar_library = _read_bib(args.scholar)
-    merged_library, matched, appended = merge_libraries(pdf_library, scholar_library)
+    primary_library = _read_bib(args.primary)
+    additional_library = _read_bib(args.additional)
+    merged_library, summary = merge_by_doi(
+        primary_library, additional_library
+    )
     with open(args.output, "w", encoding="utf-8") as output:
         output.write(bibtexparser.write_string(merged_library))
 
-    print(
-        f"Wrote {len(merged_library.entries)} records to {args.output} "
-        f"({matched} matched, {appended} Scholar-only records added)."
+    summary_text = (
+        "BibTeX merge CRUD summary\n"
+        f"Read: {summary.records_read} records\n"
+        f"Created: {summary.records_created} records\n"
+        f"Updated: {summary.records_updated} records\n"
+        f"Deleted: {summary.records_deleted} records\n"
+        f"Matched by DOI: {summary.records_matched} records\n"
+        f"Final bibliography: {len(merged_library.entries)} records ({args.output})\n"
     )
+    with open(args.summary, "w", encoding="utf-8") as output:
+        output.write(summary_text)
+    print(summary_text, end="")
 
 
 if __name__ == "__main__":
