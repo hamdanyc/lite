@@ -1,0 +1,105 @@
+I'll walk through the **v2 script** I gave you (the fixed version), using line numbers from that listing. Two things to keep in mind up front: it never writes to your original file unless you pass `-i`, and every transformation happens in **one** `perl` pass — there is no placeholder/restore round-trip like the original's `sed` → `perl` → `perl` chain [2].
+
+## Header and options (lines 1–8)
+
+Plain comments. Lines 5–8 are the four usage forms: default writes `*.cleaned`, `-i` writes in place, positional args override the glob, and `MARKER=` overrides the token. Lines 2–8 are comments, so bash ignores them entirely.
+
+## Setup (lines 9–12)
+
+| Line | Code | What it does |
+|---|---|---|
+| 9 | `set -uo pipefail` | `-u` aborts on an unset variable (catches typos in `$f`, `$out`). `-e` is deliberately **absent** so one bad file doesn't kill the loop — failures are handled at line 46 instead. `pipefail` makes `grep … \| wc -l` report grep's status, not just `wc`'s. |
+| 11 | `MARKER=${MARKER:-[cite-marker]}` | Environment `MARKER` if set, else the default. The `[` is safe inside `${…:-…}`. |
+| 12 | `backup=0; args=()` | `backup` is the in-place flag. `args=()` **resets** the array — without this, `args` would inherit from `$@` and the flags would end up in the file list. |
+
+## Flag parsing (lines 13–18)
+
+```bash
+for a in "$@"; do
+  case $a in
+    -i|--in-place) backup=1 ;;
+    *)             args+=("$a") ;;
+  esac
+done
+```
+
+Loops over each argument: `-i`/`--in-place` flips the flag and is *not* stored; everything else is appended to `args`. Net effect: `./rm_marker.sh -i a.txt b.txt` leaves `args=(a.txt b.txt)`.
+
+## Choosing the file list (lines 20–22)
+
+| Line | Code | What it does |
+|---|---|---|
+| 20 | `if ((${#args[@]})); then files=("${args[@]}")` | Explicit filenames win. `((${#…}))` is arithmetic context; it's true when the count is non-zero. |
+| 21 | `else shopt -s nullglob; files=(Section_*.txt); fi` | `nullglob` makes a non-matching glob expand to **nothing** instead of the literal string `Section_*.txt` — otherwise you'd try to open a file called `Section_*.txt`. |
+| 22 | `((${#files[@]})) \|\| { echo "no input files" >&2; exit 1; }` | Hard stop with a message on stderr and exit code 1 if the list is empty. |
+
+## Loop head (lines 24–29)
+
+| Line | Code | What it does |
+|---|---|---|
+| 24 | `export MARKER` | Makes `MARKER` visible to the child `perl` as `$ENV{MARKER}`. Without `export`, `perl` would see nothing and the replacement would be empty — silently deleting every citation instead of marking it. |
+| 25 | `for f in "${files[@]}"; do` | `"${files[@]}"` is quoted so filenames with spaces survive. |
+| 26 | `[[ -f $f ]] \|\| { … continue; }` | Skips missing files with a notice rather than dying. |
+| 28 | `if ((backup)); then cp -p -- "$f" "$f.bak"; out=$f` | In-place mode: `-p` preserves timestamps, `--` ends option parsing so a filename starting with `-` is safe. Then `out` points back at the original. |
+| 29 | `else out=$f.cleaned; fi` | Default mode: write to a sibling file, original untouched. |
+
+## The transform (lines 31–45)
+
+`perl -pe` reads the file **line by line**, applies the program, prints the result to stdout. It is *not* `-i`, so the original is never modified by perl — the shell redirection at line 46 does the writing.
+
+**Line 33** — artifact removal:
+
+```perl
+s/[ \t]*more_horiz(?![A-Za-z0-9_])//g;
+```
+
+Deletes the token plus any blanks immediately before it. The `(?![A-Za-z0-9_])` lookahead guarantees the *whole* token matched, so a longer identifier like `more_horiz_foo` would not be half-eaten. On your text, `over-support64more_horiz.` becomes `over-support64.` [1].
+
+**Lines 37–45** — the single pass, written with `/x` so the whitespace and `#` comments are ignored by the regex engine:
+
+```perl
+s{(  …keep list…  ) | (?<=[^\s\d]) \d+ }{$1 // $ENV{MARKER}}gxe;
+```
+
+Read it as: *try the keep list first; if that matches, put it back unchanged (`$1`). Otherwise, a digit run glued to a non-space, non-digit character becomes the marker (`$1` is undef, so `//` supplies `$ENV{MARKER}`).* Flags are `g` (all occurrences), `e` (replacement is code), `x` (extended). This is what replaces the original's buggy `(?<!§YEAR_)\d+` lookbehind [2] — the keep branch **consumes** the whole token, so the engine can never restart mid-number.
+
+The five keep branches:
+
+| Line | Pattern | Keeps | Why it's needed |
+|---|---|---|---|
+| 38 | `\d+\s*/\s*\d+` | `24/7` | Otherwise the `/` splits it into two markers. Also covers `$24/7$`, since the `$` signs simply aren't part of the match. |
+| 39 | `\d+(?:\.\d+)?\s*%` | `8%`, `13.72%`, `100%` | Otherwise `100%` → `[cite-marker]%`. |
+| 40 | `(?<=[^\w\d]) \d{1,3}(?:\.\d{1,3}){1,2} (?![\d.])` | `1.1`, `1.2.4`, `8.76` | Lookbehind allows a preceding space, `.`, `(`, `:` or `$`; the trailing `(?![\d.])` forbids a fourth component, which is what stops it from swallowing `7.1.1.2`. |
+| 41 | `(?<=[A-Za-z]) \d (?:\.\d{1,3}){1,2} (?![\d.])` | `AIEd1.1` | The one case where a section number is glued to a letter. Only a **single** leading digit is allowed, so a two-digit citation in front of a section (`32.1.2`) is *not* kept here. |
+| 42 | `(?<!\w)(?:19\|20)\d{2}(?!\d)` | `1968`, `(2023)` | Years anywhere, not just when the parentheses hold nothing else — the original's `\(([0-9]{4})\)` missed years inside fuller parentheticals [2]. |
+
+**Line 44** — the citation rule: `(?<=[^\s\d]) \d+` = digits whose preceding character is neither whitespace nor a digit. In this document citations are always glued to the previous word or bracket, while real content numbers (`System 1`, `Chapter 2`) are separated by a space — that's the whole basis for the distinction [1].
+
+## Output and reporting (lines 46–51)
+
+| Line | Code | What it does |
+|---|---|---|
+| 46 | `> "$out.tmp" \|\| { echo "perl failed on $f" >&2; continue; }` | Writes to a temp file; if perl fails, report and skip — the real output file is never left truncated. |
+| 47 | `mv -- "$out.tmp" "$out"` | Atomic rename, so `$out` is either the complete old file or the complete new one. |
+| 49–51 | `printf …` + two `$(grep -o … \| wc -l …)` | Prints one summary line per file and counts the result. `grep -o` is required because your file is essentially **one enormous line** — `grep -c` would report `1` regardless of how many markers exist. `-F` makes `[cite-marker]` a literal string, not a bracket expression. |
+
+## What the output looks like
+
+Terminal, one line per file (counts are illustrative):
+
+```
+Section_1_Theoretical.txt    -> Section_1_Theoretical.txt.cleaned      74 markers, 0 more_horiz left
+Section_2_Motivational.txt   -> Section_2_Motivational.txt.cleaned     31 markers, 0 more_horiz left
+```
+
+On disk, in default mode: only the `.cleaned` files, originals byte-identical. With `-i`: the original rewritten plus `<file>.bak`. The `.tmp` file exists only between lines 46 and 47.
+
+The transformed content, using the passage in the provided context [1]:
+
+> **before:** `…creates a form of cognitive over-support64more_horiz. When an AI system completes … required for deep schema construction64more_horiz.This transforms a tool … and genuine intellectual development64more_horiz.`
+>
+> **after:** `…creates a form of cognitive over-support[cite-marker]. When an AI system completes … required for deep schema construction[cite-marker].This transforms a tool … and genuine intellectual development[cite-marker].`
+
+Note what changed and what didn't: the `64`s and the `more_horiz` tokens are gone, the sentence periods are preserved, and no space was inserted before `This` — the original has no space there either. The two diagrams in the context (the SOR model and the PAD→Perceived Risk→Usage mediation model) contain no glued digits, so they pass through byte-identically, box-drawing characters and all [1].
+
+**One honest caveat:** line 28 runs `cp -p -- "$f" "$f.bak"` but does not check its exit status, so if the backup fails (full disk, permissions on the directory) the script proceeds and overwrites the original. If you want that closed, change line 28 to `cp -p -- "$f" "$f.bak" || { echo "backup failed: $f" >&2; continue; }`.
