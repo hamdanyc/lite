@@ -1,0 +1,205 @@
+NOTES ON rm_marker_deep_v4.sh
+=============================
+
+PURPOSE
+-------
+Cleanup tool for scraped documents (NotebookLM / Gemini output). Two jobs:
+
+  v3 (content)  - delete the "more_horiz" scraper artifact
+                - replace citation digits with a placeholder token
+                  (default [cite-marker]) while PROTECTING real numbers
+                  (percentages, ratios, years, section numbers, H1/T3
+                  labels, N=6837)
+
+  v4 (layout)   - normalise whitespace before numbered headings
+                - isolate ALL-CAPS figure captions on their own block
+                - delete the "======" underline under each caption
+
+
+BASH WRAPPER
+------------
+  set -uo pipefail        no -e: failures handled per file, loop continues
+
+  MARKER   default [cite-marker]
+  HEAD_NL  default 2      count of newline chars (2 = one blank line)
+  CAP_NL   default 2      count of newline chars (2 = one blank line)
+
+  -i / --in-place         edit in place, original kept as *.bak
+  otherwise               a.txt -> a_Cleaned.txt
+
+  Default input: Section_*.txt (nullglob so an unmatched glob is empty).
+  Files matching *_cleaned.txt / *_Cleaned.txt are skipped (idempotence).
+  Output is written to "$out.tmp" then renamed, so a Perl failure leaves
+  the previous output untouched.
+
+  Final printf reports: marker count, more_horiz left, "=" rules left.
+
+
+PERL INVOCATION
+---------------
+  perl -0777 -pe '...'
+
+  -0777   slurp mode: whole file is one "line" in $_
+  -p      implicit while(<>) { ...; print }  -> final $_ is the output
+  -e      program text
+
+  $H = "\n" x ($ENV{HEAD_NL} || 2);
+  $C = "\n" x ($ENV{CAP_NL}  || 2);
+
+
+PASS 1 - CITATION MARKERS (v3 logic)
+------------------------------------
+  1a) s/[ \t]*more_horiz(?![A-Za-z0-9_])//g;
+      Removes the artifact plus preceding spaces/tabs. The lookahead
+      avoids matching a longer identifier such as more_horiz_foo.
+
+  1b) One substitution with two kinds of branch:
+
+        (?<keep> ...five keep alternatives... )   <- real numbers
+        | (?<=[^\s\d=:]) \d+                      <- citation digits
+        | (?<![A-Za-z])[A-Z]\d{1,2}(?![\w])       <- H1 H2 T3
+
+      Replacement is code (/e):
+
+        defined $+{keep} ? $+{keep} : $ENV{MARKER}
+
+      If the keep group participated, echo the text back unchanged;
+      otherwise substitute the marker. %+ is reset per match attempt,
+      so no stale value can leak between matches.
+
+      WARNING: the citation branches MUST stay outside (?<keep>).
+      Moving them inside makes $+{keep} always defined and turns the
+      whole substitution into a no-op.
+
+      Order matters: keep branches are tried first at each position,
+      which is why 2024 is treated as a year, not a citation.
+
+  Keep branches
+    1  \d+\s*/\s*\d+                             24/7, 3 / 4
+    2  \d+(?:\.\d+)?\s*%                         8%, 13.72 %
+    3  (?<=[^\w\d]) \d{1,3}(?:\.\d{1,3}){1,2} (?![\d.])
+                                                 1.1, 1.2.4, 3.14
+    4  (?<=[A-Za-z]) \d (?:\.\d{1,3}){1,2} (?![\d.])
+                                                 AIEd1.1
+    5  (?<!\w)(?:19|20)\d{2}(?!\d)               2024, 1999
+
+  Replace branches
+    (?<=[^\s\d=:]) \d+        digit run glued to a non-space, non-digit,
+                              non-'=', non-':' character. Excluding '='
+                              protects N=6837; excluding ':' protects
+                              10:30 and 1:2.
+    (?<![A-Za-z])[A-Z]\d{1,2}(?![\w])
+                              heading / table labels: H1, H2, T3
+
+  Worked example
+    in : AIEd1.1 Rationale, 8% of 2024, N=6837, see H2 and text12
+    out: AIEd1.1 Rationale, 8% of 2024, N=6837, see [cite-marker] and
+         text[cite-marker]
+
+
+PASS 2 - FIGURE CAPTIONS
+------------------------
+  A caption = an ALL-CAPS run ending a line that is immediately followed
+  by a line made only of "=". The underline is consumed, i.e. deleted.
+
+    ^ (?<pre> .*? ) (?<ind> [ \t]+ )
+      (?<cap> [A-Z] (?: [A-Z0-9] | [^a-zA-Z0-9\n] )*? )
+      [ \t]* \n [ \t]* =+ [ \t]* \n (?: [ \t]* \n )?
+
+  /m makes ^ match at every line start; . does not cross newlines, so
+  <pre> stays on one line. <pre> is lazy, so it is as short as possible.
+  <ind> requires at least one space/tab, so a caption at column 0 is
+  never matched. <cap> allows uppercase, digits and any non-alphanumeric
+  non-newline character (spaces, ':', '-', parentheses) inside.
+
+  Replacement
+    - <pre> non-empty : pre . $C . ind . cap . $C
+                        caption pushed onto its own block, indentation
+                        preserved
+    - <pre> empty     : (CAP_NL - 1) newlines, unless the match starts
+                        at offset 0 of the file ($-[0] is falsy there).
+                        The -1 compensates for the newline that ended
+                        the previous line and was not consumed.
+
+  Example (CAP_NL=2)
+    in : Some text FIGURE 1: RESULTS
+         ==========
+         next paragraph
+    out: Some text
+
+          FIGURE 1: RESULTS
+
+         next paragraph
+
+
+PASS 3 - LEFTOVER "=" RULES
+---------------------------
+  s{ ^ [ \t]* =+ [ \t]* \n }{}gmx;
+
+  Deletes any line that is only "=" that pass 2 did not already swallow.
+  Requires a trailing newline, so an "=" line at EOF with no final
+  newline survives.
+
+
+PASS 4 - NUMBERED HEADINGS
+--------------------------
+  s{ (?<! \d ) (?<! \d\. ) [ \t]* \n* [ \t]*
+     ( \d{1,2} (?:\.\d{1,2}){1,2} ) (?= [ \t]+ [A-Z] )
+   }{ $H . $1 }gxe;
+
+  Every heading such as 1.1, 1.2.4, 12.3.4 gets exactly HEAD_NL newlines
+  in front of it, whether it was glued to the previous word
+  ("AIEd1.1 Rationale") or already started a line.
+
+  (?<!\d) and (?<!\d\.)   do not start inside a longer dotted number;
+                          the second one stops 1.2.4.5 from being cut
+  [ \t]* \n* [ \t]*       the "glue": trailing spaces, any newlines,
+                          leading spaces - all consumed and replaced
+  (?= [ \t]+ [A-Z] )      must be followed by whitespace and an
+                          uppercase letter, i.e. an actual title
+
+  Example (HEAD_NL=2)
+    in : AIEd1.1 Rationale
+    out: AIEd
+
+         1.1 Rationale
+
+  Note the interaction with pass 1: AIEd1.1 is protected there (keep
+  branch 4) so it does not become a marker, and pass 4 then splits it.
+
+
+EDGE CASES AND GOTCHAS
+----------------------
+  1. HEAD_NL=0 and CAP_NL=0 do not work: $ENV{...} || 2 treats "0"
+     as false and falls back to 2.
+
+  2. Pass 4 can emit more than HEAD_NL newlines when the preceding line
+     ends in a digit. For "Figure 3\n\n1.1 Title" the lookbehind rejects
+     the first newline (preceded by 3), so the match starts at the second
+     one and the result has three newlines instead of two.
+
+  3. A heading at offset 0 of the file is not normalised: both
+     lookbehinds need characters to their left.
+
+  4. A section number at offset 0 is not protected by keep branch 3, for
+     the same lookbehind reason. The citation branch also cannot fire
+     there, since it needs a preceding non-space character.
+
+  5. \s* in keep branches 1 and 2 can cross newlines, so "8\n%" would be
+     preserved as a percentage.
+
+  6. Captions must be indented ([ \t]+ before the caption) and must have
+     an "=" underline; otherwise pass 2 ignores them.
+
+  7. [^\w\d] and (?![\w]) are redundant: \d is a subset of \w. Harmless,
+     but they read as if they meant something more.
+
+  8. The marker is inserted literally: $ENV{MARKER} is a variable value,
+     so backslashes and $ in a custom MARKER are not re-interpreted.
+
+  9. -p prints $_ even if a substitution dies mid-way, but the bash
+     "|| { rm -f ...; continue; }" catches the non-zero exit and
+     discards the temp file.
+
+ 10. Pass 2's caption class allows \r (it is not in a-zA-Z0-9\n), so
+     CRLF files may behave slightly differently.

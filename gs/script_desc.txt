@@ -1,0 +1,181 @@
+rm_marker_deep.sh (v4) - Text Cleaning Script for Section Files
+
+DESCRIPTION
+-----------
+This script processes text files (default: Section_*.txt) to clean up formatting artifacts
+from a scraping/export process. It performs four main passes using Perl:
+
+1. CITATION MARKER NORMALIZATION (Pass 1)
+   - Removes "more_horiz" scraper artifacts
+   - Converts inline citation numbers (e.g., "[1]", "23") to a configurable token
+     (default: "[cite-marker]")
+   - Protects legitimate numbers: fractions (24/7), percentages (8%), version/section
+     numbers (1.1, 1.2.4), years (2024), and heading labels (H1, H2, T3)
+
+2. FIGURE CAPTION ISOLATION (Pass 2)
+   - Detects ALL-CAPS caption lines immediately followed by an "======" underline
+   - Isolates each caption in its own block with configurable blank lines before/after
+   - Removes the "======" underline line
+
+3. RESIDUAL RULE REMOVAL (Pass 3)
+   - Deletes any remaining lines consisting solely of "=" characters
+
+4. NUMBERED HEADING SPACING (Pass 4)
+   - Ensures exactly HEAD_NL newlines before every numbered heading (1.1, 1.1.2, etc.)
+   - Handles headings glued to preceding text (e.g., "AIEd1.1 Rational") or already at line start
+
+USAGE
+-----
+  ./rm_marker_deep.sh                     # Process all Section_*.txt -> Section_*_Cleaned.txt
+  ./rm_marker_deep.sh -i                  # In-place edit, originals backed up as *.bak
+  ./rm_marker_deep.sh a.txt b.txt         # Process specific files
+  MARKER='[C]' ./rm_marker_deep.sh        # Custom citation token
+  HEAD_NL=3 CAP_NL=3 ./rm_marker_deep.sh  # Two blank lines (3 newlines) around headings/captions
+
+ENVIRONMENT VARIABLES
+---------------------
+  MARKER   - Replacement token for citations (default: "[cite-marker]")
+  HEAD_NL  - Newlines before numbered headings (default: 2 = one blank line)
+  CAP_NL   - Newlines before/after figure captions (default: 2 = one blank line)
+
+OUTPUT
+------
+For each input file, produces a cleaned version (or overwrites with -i).
+Prints a summary line per file showing:
+  - Input -> Output filename
+  - Citation marker count
+  - Remaining "more_horiz" artifacts (should be 0)
+  - Remaining "=" rule lines (should be 0)
+
+REQUIREMENTS
+------------
+- bash, perl (with -0777 slurp mode support)
+- Standard Unix tools: cp, mv, grep, wc, tr
+
+================================================================================
+DETAILED PERL SCRIPT EXPLANATION
+================================================================================
+
+The core processing is a single Perl one-liner executed with `-0777` (slurp mode)
+to treat each file as a single string, enabling cross-line regex matches.
+
+--------------------------------------------------------------------------------
+PASS 1: CITATION MARKER NORMALIZATION
+--------------------------------------------------------------------------------
+Code:
+  s/[ \t]*more_horiz(?![A-Za-z0-9_])//g;
+
+  s{(?<keep>
+       \d+\s*/\s*\d+                                        # 24/7
+     | \d+(?:\.\d+)?\s*%                                    # 8%  13.72%
+     | (?<=[^\w\d]) \d{1,3}(?:\.\d{1,3}){1,2} (?![\d.])     # 1.1  1.2.4
+     | (?<=[A-Za-z]) \d     (?:\.\d{1,3}){1,2} (?![\d.])    # AIEd1.1
+     | (?<!\w)(?:19|20)\d{2}(?!\d)                          # 2024
+    )
+     | (?<=[^\s\d=:]) \d+                                   # citation digits,
+     | (?<![A-Za-z])[A-Z]\d{1,2}(?![\w])                    # H1  H2  T3
+   }{ defined $+{keep} ? $+{keep} : $ENV{MARKER} }gxe;
+
+Purpose: Replace citation numbers with MARKER while preserving legitimate numbers.
+
+Step 1: Remove "more_horiz" artifacts (scraper leftovers) with optional surrounding whitespace.
+        Negative lookahead `(?![A-Za-z0-9_])` prevents partial word matches.
+
+Step 2: Single complex substitution with named capture group `(?<keep>...)`.
+        The regex has two main parts separated by `|` (OR):
+        - Part A (inside `(?<keep>)`): Patterns to KEEP unchanged (echoed back via `$+{keep}`)
+        - Part B (outside `(?<keep>)`): Patterns to REPLACE with MARKER
+
+        PART A - KEEP PATTERNS (evaluated left-to-right):
+        1. `\d+\s*/\s*\d+`              : Fractions like "24/7", "1/2"
+        2. `\d+(?:\.\d+)?\s*%`          : Percentages like "8%", "13.72%"
+        3. `(?<=[^\w\d]) \d{1,3}(?:\.\d{1,3}){1,2} (?![\d.])`
+           : Standalone section numbers (1.1, 1.2.4) preceded by non-word/digit
+        4. `(?<=[A-Za-z]) \d (?:\.\d{1,3}){1,2} (?![\d.])`
+           : Section numbers glued to words (AIEd1.1, Ch2.3.4)
+        5. `(?<!\w)(?:19|20)\d{2}(?!\d)`: Years 1900-2099 not part of longer numbers
+
+        PART B - REPLACE PATTERNS (become MARKER):
+        1. `(?<=[^\s\d=:]) \d+`        : Digits preceded by non-space, non-digit, non-=, non-:
+           (catches "[1]", "ref 23", but not "N=6837" or "1.1")
+        2. `(?<![A-Za-z])[A-Z]\d{1,2}(?![\w])`
+           : Heading labels H1, H2, T3 etc. (capital letter + 1-2 digits, not part of word)
+
+        Flags: `g` (global), `x` (extended whitespace/comments), `e` (evaluate replacement as code)
+
+--------------------------------------------------------------------------------
+PASS 2: FIGURE CAPTION ISOLATION
+--------------------------------------------------------------------------------
+Code:
+  s{ ^ (?<pre> .*? ) (?<ind> [ \t]+ )
+     (?<cap> [A-Z] (?: [A-Z0-9] | [^a-zA-Z0-9\n] )*? )
+     [ \t]* \n [ \t]* =+ [ \t]* \n (?: [ \t]* \n )?
+   }{
+     ( length($+{pre}) ? $+{pre} . $C
+                       : ($-[0] ? ("\n" x (($ENV{CAP_NL} || 2) - 1)) : "") )
+     . $+{ind} . $+{cap} . $C
+   }gmxe;
+
+Purpose: Find ALL-CAPS captions with "======" underlines, isolate them in blocks.
+
+Pattern breakdown (with `/m` multiline, `/x` extended, `/e` eval):
+- `^`                          : Start of line
+- `(?<pre> .*? )`              : Non-greedy capture of preceding text on same line
+- `(?<ind> [ \t]+ )`           : Capture indentation (spaces/tabs) before caption
+- `(?<cap> [A-Z] (?: [A-Z0-9] | [^a-zA-Z0-9\n] )*? )`
+   : Capture caption: starts with uppercase, then uppercase/digits/punctuation (no lowercase)
+- `[ \t]* \n [ \t]* =+ [ \t]* \n` : Trailing whitespace, newline, "======" line, newline
+- `(?: [ \t]* \n )?`           : Optional blank line after
+
+Replacement logic:
+- If `$+{pre}` exists (caption not at line start): keep pre-text, add `$C` (CAP_NL newlines)
+- If at line start (`$-[0] == 0`): add `(CAP_NL - 1)` newlines (avoid leading blank block)
+- Then: indentation + caption + `$C` (CAP_NL newlines after)
+- Effect: Caption becomes isolated block with blank lines, underline removed.
+
+--------------------------------------------------------------------------------
+PASS 3: RESIDUAL RULE REMOVAL
+--------------------------------------------------------------------------------
+Code:
+  s{ ^ [ \t]* =+ [ \t]* \n }{}gmx;
+
+Purpose: Delete any remaining lines of only "=" characters (with optional whitespace).
+- `^ [ \t]* =+ [ \t]* \n` : Line with only equals signs, possibly indented
+- Flags: `g` (global), `m` (multiline ^), `x` (extended)
+
+--------------------------------------------------------------------------------
+PASS 4: NUMBERED HEADING SPACING
+--------------------------------------------------------------------------------
+Code:
+  s{ (?<! \d ) (?<! \d\. ) [ \t]* \n* [ \t]*
+     ( \d{1,2} (?:\.\d{1,2}){1,2} ) (?= [ \t]+ [A-Z] )
+   }{ $H . $1 }gxe;
+
+Purpose: Ensure exactly HEAD_NL newlines before numbered headings (1.1, 1.1.2, etc.)
+
+Pattern breakdown:
+- `(?<! \d ) (?<! \d\. )`    : Not preceded by digit or digit+dot (avoid 1.1.1.1)
+- `[ \t]* \n* [ \t]*`        : Optional whitespace, newlines, whitespace (existing spacing)
+- `( \d{1,2} (?:\.\d{1,2}){1,2} )` : Capture heading number (1-2 digits, 1-2 dot-groups)
+- `(?= [ \t]+ [A-Z] )`       : Followed by whitespace and uppercase (heading title)
+
+Replacement: `$H . $1` where `$H` = HEAD_NL newlines (from env), `$1` = captured heading.
+- Normalizes spacing: exactly HEAD_NL newlines before heading, no more, no less.
+- Works whether heading is glued ("AIEd1.1") or already on new line.
+
+--------------------------------------------------------------------------------
+PERL EXECUTION CONTEXT
+--------------------------------------------------------------------------------
+- `-0777` : Slurp entire file into `$_` (enables cross-line regex)
+- `-p`    : Implicit loop: read file, process, print `$_`
+- `-e`    : Execute following code
+- Environment variables `MARKER`, `HEAD_NL`, `CAP_NL` accessed via `$ENV{...}`
+- Output redirected to temp file, then atomically moved to final destination
+
+--------------------------------------------------------------------------------
+POST-PROCESSING REPORTING
+--------------------------------------------------------------------------------
+After Perl, bash reports per-file stats using grep/wc:
+- `grep -oF -- "$MARKER" "$out" | wc -l` : Count citation markers inserted
+- `grep -o more_horiz "$out" | wc -l`    : Verify artifact removal (should be 0)
+- `grep -cE '^[[:space:]]*=+[[:space:]]*$' "$out"` : Verify rule removal (should be 0)
