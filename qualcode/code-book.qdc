@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CodeBook xmlns="urn:remm-org:refi-qda:codebook:1.0" origin="HelpfulExpert" 
+          name="Ethnic Conflict Codebook" 
+          description="A codebook based on the multi-dimensional factors of ethnic conflict in Burundi [1], [2], [3].">
+  <Codes>
+    <!-- Historical & Emotional Drivers -->
+    <Code name="Historical &amp; Emotional Drivers" isInstructional="false" 
+          description="Categories involving past grievances and affective states [4], [5].">
+      <Code name="Historical Memories" isInstructional="false" 
+            description="A set of ideas about the past history of an ethnic group used as a reference for animosities and a justification for discriminatory actions [4]." />
+      <Code name="Collective Emotions" isInstructional="false" 
+            description="Affective states such as anxiety, fear, insecurity, and pride that are socially and politically constructed realities [5], [6]." />
+      <Code name="Myth of Origins" isInstructional="false" 
+            description="Narratives regarding shared or distinct ancestors, often used to define indigenous versus immigrant status or to justify claims of invasion [7]." />
+    </Code>
+
+    <!-- Resource Competition -->
+    <Code name="Resource Competition" isInstructional="false" 
+          description="Factors related to the distribution and mobilization of wealth and institutional benefits [8], [9].">
+      <Code name="Wealth Disparity" isInstructional="false" 
+            description="The unequal distribution of wealth across groups which creates perceptions of an unjustly widening economic gap [8]." />
+      <Code name="Institutional Access" isInstructional="false" 
+            description="Competition for scarce resources that confer group benefits such as jobs, scholarships, and government contracts [10], [11]." />
+      <Code name="Educational Bias" isInstructional="false" 
+            description="The denial of opportunities for tertiary education to specific ethnic groups to ensure they remain marginalized from elite status [12], [13]." />
+    </Code>
+
+    <!-- Political & Structural Factors -->
+    <Code name="Political &amp; Structural Factors" isInstructional="false" 
+          description="Factors involving the manipulation of identity and political transitions [14], [15].">
+      <Code name="Political Entrepreneurs" isInstructional="false" 
+            description="Leaders who manipulate historical traumas and ethnic fears to create polarization and serve their own interests [5], [15]." />
+      <Code name="Ethnification" isInstructional="false" 
+            description="The political mobilization of ethnic identities leading to increased intolerance and competition over rights [15], [16]." />
+      <Code name="Democratic Transition" isInstructional="false" 
+            description="The opening of a competitive arena for power that can provide incentives for politicians to use ethnic outbidding [14], [17]." />
+    </Code>
+
+    <!-- Institutional Factors -->
+    <Code name="Institutional Factors" isInstructional="false" 
+          description="State machinery and governance structures that influence ethnic relations [5], [18].">
+      <Code name="Security Sector Bias" isInstructional="false" 
+            description="Ethnic monopoly or exclusion within state machinery such as the military, police, or security forces [12], [19], [20]." />
+      <Code name="Governance Failure" isInstructional="false" 
+            description="The massive failure of state institutions to maintain control or the total collapse of a sovereign authority [5], [13]." />
+      <Code name="Institutional Suppression" isInstructional="false" 
+            description="State-led discriminatory actions or selective massacres against specific ethnic elites to maintain power [15], [12]." />
+    </Code>
+
+    <!-- Structural Contexts -->
+    <Code name="Structural Contexts" isInstructional="false" 
+          description="Broad historical and global conditions that shape conflict environments [21], [22].">
+      <Code name="Colonial Legacy" isInstructional="false" 
+            description="The impact of arbitrary boundary drawing and 'divide and rule' tactics that forced culturally unrelated persons to co-exist [21], [7]." />
+      <Code name="Globalization and Migration" isInstructional="false" 
+            description="Interrelated issues of diaspora and cultural identity that unleash discontent when framed through assimilation or multiculturalism [22]." />
+    </Code>
+
+    <!-- Conflict Outcomes -->
+    <Code name="Conflict Outcomes" isInstructional="false" 
+          description="The direct results of violent ethnic warfare and social fracture [23], [24].">
+      <Code name="Group Polarization" isInstructional="false" 
+            description="The strengthening of attachment to one's own group combined with a profound distrust of others during social conflict [24], [15]." />
+      <Code name="Human Dislocation" isInstructional="false" 
+            description="The physical displacement of populations internally or abroad due to violent warfare and state-led massacres [23], [25]." />
+    </Code>
+  </Codes>
+</CodeBook>

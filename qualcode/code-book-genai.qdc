@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CodeBook xmlns="urn:QDA-XML:codebook:1.0" origin="Gemini Notebook - REFI-QDA Standard Qualitative Codebook" createDateTime="2026-10-26T02:59:00Z">
+  <Codes>
+    <Code id="PILLAR_1_AFFECTIVE" name="PILLAR I: Affective &amp; Psychological Trajectories" color="#3498DB">
+      <Description>Examining student emotional trajectories, anxiety reduction, autonomy satisfaction, Maslovian need fulfillment, and technostress during AI interaction (RQ2: Emotional Acceptance).</Description>
+      <Code id="AFF_ANX_RED" name="1.1 Uncertainty Elimination &amp; Anti-Anxiety" color="#2980B9">
+        <Description>Sub-Themes: Post-COVID-19 Learning 3.0 Uncertainty Reduction; Rapid Reassurance &amp; Calm; Affective Filter Lowering; Non-Evaluative Safe Space
+Indicators: Describing immediate stress relief when starting ambiguous assignments; Expressions of reduced panic during late-night study or tight deadline windows; Comfort in asking basic or embarrassing questions without fear of peer/faculty evaluation.
+Interview Probes: Section C - Q7
+Literature Grounding: Sha Gao (2024); Luan, Lin, &amp; Li (2023); Krashen (1982); Pekrun (2006); Alshammari (2025); Alanezi (2024)</Description>
+      </Code>
+      <Code id="AFF_AUT_AGN" name="1.2 RMT Autonomy &amp; Self-Directed Exploration" color="#2980B9">
+        <Description>Sub-Themes: Relationships Motivation Theory (RMT) Autonomy; Self-Paced Inquiry &amp; Pacing; Writing/Coding Self-Efficacy
+Indicators: Articulating personal agency, digital self-direction, and flexible exploration; Boosted confidence in essay drafting, logic structuring, or programming through real-time feedback.
+Interview Probes: Section C - Q5
+Literature Grounding: Luan, Lin, &amp; Li (2023); Deci et al. (2014); Ryan &amp; Deci (2017); Chiu (2024); Zhou &amp; Li (2023)</Description>
+      </Code>
+      <Code id="AFF_MAS_FUL" name="1.3 Maslovian Need Fulfillment" color="#2980B9">
+        <Description>Sub-Themes: Higher-Order Psychological Need Satisfaction (Maslow's Hierarchy); Need for Care, Dignity, and Self-Actualization
+Indicators: Describing AI as a constant study partner; Gratitude for private help-seeking free from social criticism; Elevated productivity and self-worth.
+Interview Probes: Section C - Q5, Q6
+Literature Grounding: Luan, Lin, &amp; Li (2023); Maslow (1954); Abdillah, Partino, &amp; Madjid (2023); Alanezi (2024); Jalon et al. (2024)</Description>
+        <Code id="AFF_CAMARAD" name="1.3a Virtual Camaraderie &amp; Care" color="#1F618D">
+          <Description>24/7 Virtual Presence &amp; Care: Describing AI as a constant, non-judgmental study partner or virtual counselor buffering against isolation.</Description>
+        </Code>
+        <Code id="AFF_DIGNITY" name="1.3b Dignity &amp; Privacy" color="#1F618D">
+          <Description>Help-Seeking without Criticism: Value placed on private help-seeking free from fear of peer/instructor exposure or embarrassment.</Description>
+        </Code>
+        <Code id="AFF_SELFWORTH" name="1.3c Self-Actualization &amp; Productivity" color="#1F618D">
+          <Description>Task Productivity &amp; Self-Worth: Feelings of elevated purpose, competence, and self-worth when completing complex assignments.</Description>
+        </Code>
+      </Code>
+      <Code id="AFF_TEC_STR" name="1.4 Technostress &amp; Relational Isolation" color="#E74C3C">
+        <Description>Sub-Themes: Emotional Creepiness &amp; Uncanny Unease; Hallucination Frustration; Empathy Deficits &amp; Coldness; Parasocial Isolation
+Indicators: Unease regarding human-like AI responses or queasy conversational interactions; Irritation when the model hallucinates or misunderstands prompts; Social detachment from course instructors, group work, and peer communities.
+Interview Probes: Section C - Q6, Q7
+Literature Grounding: Polyportis (2023/2024); Farrokhnia et al. (2023); Neumann et al. (2023); Focus Group (2024); AJET (2024)</Description>
+      </Code>
+    </Code>
+    <Code id="PILLAR_2_COGNITIVE" name="PILLAR II: Cognitive Development &amp; Skill Evolution" color="#9B59B6">
+      <Description>Evaluating working memory reallocation, Dual-Process cognitive economy, Cognitive Load Theory scaffolding, and potential cognitive offloading or skill atrophy (RQ1: Cognitive Impact).</Description>
+      <Code id="COG_SCAF_SYS2" name="2.1 Metacognitive &amp; System 2 Scaffolding" color="#8E44AD">
+        <Description>Sub-Themes: AI-Coached Metacognition; System 2 Analytical Activation; Extraneous Load Offloading; Germane Schema Reallocation
+Indicators: Utilizing AI as a Socratic coach to monitor and reflect upon personal thinking processes; Delegating routine formatting/jargon parsing to allocate mental bandwidth toward critical analysis; Engaging in multi-hop reasoning and prompt debugging.
+Interview Probes: Section B - Q2, Q3
+Literature Grounding: Sweller (2011, 2020); Evans &amp; Kahneman (2013); Suriano (2024/2025); Patac &amp; Patac (2025); Luan et al. (2023)</Description>
+      </Code>
+      <Code id="COG_OFF_ATRO" name="2.2 Cognitive Offloading &amp; Intellectual Atrophy" color="#C0392B">
+        <Description>Sub-Themes: Passive Task Delegation; System 1 Heuristic Defaulting; Schema Acquisition Gap; Perceived Memory Decay
+Indicators: Copying AI output directly into submissions without critical reading or editing; Defaulting to fast heuristics under time pressure, bypassing deep reading; Expressing concern over skill atrophy, memory retention decay, or baseline equalization deficits.
+Interview Probes: Section B - Q2, Q4
+Literature Grounding: Abbas, Jam, &amp; Khan (2024); Cassinadri (2024); Rudolph et al. (2023); Jalon, Chua, &amp; Torres (2024)</Description>
+      </Code>
+    </Code>
+    <Code id="PILLAR_3_BEHAVIORAL" name="PILLAR III: Behavioral Adaptation &amp; Dynamics" color="#2ECC71">
+      <Description>Investigating Self-Regulated Learning (SRL) cycles, UTAUT3 structural adoption drivers, habitual usage mechanics, and workload-driven classroom deviance (RQ3: Behavioral Habits).</Description>
+      <Code id="BEH_SRL_PROMPT" name="3.1 AI-Coached SRL &amp; Iterative Prompting" color="#27AE60">
+        <Description>Sub-Themes: Metacognitive Goal Orientation; Self-Control &amp; Pacing; Iterative Prompt Debugging Loops; Personal Innovativeness Moderation
+Indicators: Setting explicit role constraints and step-by-step instructions before prompting; Systematically testing, analyzing, and refining prompts through iterative multi-turn dialogues; High personal innovativeness driving creative scaffolding.
+Interview Probes: Section A - Q1, Section D - Q10
+Literature Grounding: Zimmerman (2000); Jing et al. (2024); Wu, Tian, &amp; Liu (2025); Chiu (2024); Daha &amp; Altelwany (2025)</Description>
+      </Code>
+      <Code id="BEH_UTAUT3_HAB" name="3.2 UTAUT3 Structural Adoption &amp; Habit Mechanics" color="#27AE60">
+        <Description>Sub-Themes: Performance &amp; Effort Expectancy; Hedonic Motivation &amp; Enjoyment; Inhibitory Habit Moderation; Price Value Non-Significance
+Indicators: Citing rapid time-saving and low operational friction over social influence; Reporting automated, routine default usage where habit overrides conscious intention; Ignoring subscription costs in favor of workflow execution.
+Interview Probes: Section A - Q1, Section D - Q8
+Literature Grounding: Wu, Tian, &amp; Liu (2025); Ajzen (1991); AJET (2024)</Description>
+      </Code>
+      <Code id="BEH_DEF_DEV" name="3.3 Workload Deferral &amp; Classroom Deviance" color="#D35400">
+        <Description>Sub-Themes: Academic Procrastination; Last-Minute Task Deferral; Live Q&amp;A Screen Reading; Peer Engagement Substitution
+Indicators: Delaying assignment starts due to employment fatigue, relying on AI for rapid drafting; Reading AI responses directly off screens during live oral presentations; Substituting peer group collaboration with machine interaction.
+Interview Probes: Section A - Q1, Section D - Q8
+Literature Grounding: Abbas et al. (2024); Purwasih &amp; Sahnan (2023); Taktak et al. (2024)</Description>
+      </Code>
+    </Code>
+    <Code id="PILLAR_4_INTEGRITY" name="PILLAR IV: Shifting Baselines of Academic Integrity" color="#E67E22">
+      <Description>Analyzing Cognitive Dissonance resolution, moral disengagement, detection evasion tactics, and active source verification habits (RQ3: Integrity &amp; Ethics).</Description>
+      <Code id="INT_DIS_VERIF" name="4.1 Cognitive Dissonance &amp; Active Verification" color="#D35400">
+        <Description>Sub-Themes: Efficiency vs. Ethics Dissonance; Active Primary Source Checking; Prompt Optimization for Personal Voice; Risk Perception Mediation (PAD)
+Indicators: Experiencing internal moral conflict, guilt, or tension when submitting AI-assisted text; Actively cross-checking AI citations against primary academic databases to eliminate hallucinations; Restructuring and rewriting AI drafts to preserve authentic personal voice.
+Interview Probes: Section D - Q9, Q10
+Literature Grounding: Festinger (1957); Ren, Zheng, &amp; Zhang (2025); Acosta-Enriquez et al. (2024); Ortiz-Bonnin &amp; Blahopoulou (2025); Elsevier (2024)</Description>
+      </Code>
+      <Code id="INT_MOR_DIS" name="4.2 Uncredited AI-giarism &amp; Moral Disengagement" color="#C0392B">
+        <Description>Sub-Themes: Uncredited AI Submission; Detection Evasion Tactics; Moral Rationalization; Workload Stress Justification
+Indicators: Rationalizing uncredited copy-pasting due to heavy job shifts or overlapping assignment deadlines; Viewing uncredited AI generation as a standard peer norm or basic editing aid; Exploiting Turnitin detection software limits.
+Interview Probes: Section D - Q8, Q9
+Literature Grounding: Cotton, Cotton, &amp; Shipway (2024); Bin-Nashwan et al. (2023); Jędryczka et al. (2025); Bandura (1986); Dehouche (2021)</Description>
+      </Code>
+    </Code>
+  </Codes>
+</CodeBook>
