@@ -20,9 +20,14 @@ except ImportError as exc:
     )
     raise SystemExit(1)
 
+LOCAL_MODEL_PATH = Path(
+    "/mnt/abi-ai/gguf-model/gemma-4-E2B-it-Q4_0.gguf"
+)
+LOCAL_BASE_URL = "http://127.0.0.1:8080/v1"
 MODELS = {
     "groq": "qwen/qwen3.8-27b",
-    "openrouter": "deepseek/deepseek-v4.1-flash-1017",
+    "openrouter": "google/gemma-4-26b-a4b-it",
+    "local": LOCAL_MODEL_PATH.name,
 }
 API_ERRORS = (GroqAPIError, OpenAIAPIError)
 RATE_LIMIT_ERRORS = (GroqRateLimitError, OpenAIRateLimitError)
@@ -64,6 +69,8 @@ def setup_logging() -> None:
 
 def load_api_key(provider: str = "groq") -> str:
     load_dotenv()
+    if provider == "local":
+        return "local"
     env_var = "GROQ_API_KEY" if provider == "groq" else "OPENROUTER_API_KEY"
     key = os.getenv(env_var, "").strip()
     if not key:
@@ -76,6 +83,8 @@ def load_api_key(provider: str = "groq") -> str:
 def create_client(provider: str, api_key: str) -> Groq | OpenAI:
     if provider == "groq":
         return Groq(api_key=api_key)
+    if provider == "local":
+        return OpenAI(api_key=api_key, base_url=LOCAL_BASE_URL)
     return OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
 
 
@@ -229,10 +238,10 @@ def scan_article(
     factor_block = "\n".join(f"- {c['factor']}: {c['description']}" for c in codes)
     prompt = (
         f"interview text:\n{text}\n\nFactors:\n{factor_block}\n\n"
-        "For each factor, return exact phrases copied verbatim from the article "
-        "that express that factor. Return JSON of the form "
+        "For each factor, return exact phrases copied verbatim from the text "
+        "which express that factor. Return JSON of the form "
         "{\"<factor name>\": [\"exact phrase\", ...], ...}. "
-        "Only include phrases that appear verbatim in the article. "
+        "Only include phrases that appear verbatim in the text. "
         "Use an empty list when none apply."
     )
     try:
@@ -358,6 +367,13 @@ def main() -> int:
         client = create_client(args.provider, api_key)
         model = MODELS[args.provider]
         log.info("Using %s provider with model %s", args.provider, model)
+        if args.provider == "local":
+            log.info(
+                "Ensure llama.cpp is serving this model: python -m llama_cpp.server "
+                "--model %s --host 127.0.0.1 --port 8080 --model_alias %s",
+                LOCAL_MODEL_PATH,
+                model,
+            )
 
         codes = extract_codes(args.codebook)
         log.info("Loaded %d codes from %s", len(codes), args.codebook)
