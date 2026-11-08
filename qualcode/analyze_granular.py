@@ -11,7 +11,8 @@ from pathlib import Path
 
 try:
     from dotenv import load_dotenv
-    from groq import APIError, Groq, RateLimitError
+    from groq import APIError as GroqAPIError, Groq, RateLimitError as GroqRateLimitError
+    from openai import APIError as OpenAIAPIError, OpenAI, RateLimitError as OpenAIRateLimitError
 except ImportError as exc:
     sys.stderr.write(
         f"Missing dependency: {exc.name}. "
@@ -19,7 +20,12 @@ except ImportError as exc:
     )
     raise SystemExit(1)
 
-MODEL = "qwen/qwen3.8-27b"
+MODELS = {
+    "groq": "qwen/qwen3.8-27b",
+    "openrouter": "deepseek/deepseek-v4.1-flash-1017",
+}
+API_ERRORS = (GroqAPIError, OpenAIAPIError)
+RATE_LIMIT_ERRORS = (GroqRateLimitError, OpenAIRateLimitError)
 MAX_ARTICLE_CHARS = 20000
 API_SLEEP_SECONDS = 0.5
 MAX_RETRIES = 3
@@ -56,14 +62,21 @@ def setup_logging() -> None:
     )
 
 
-def load_api_key() -> str:
+def load_api_key(provider: str = "groq") -> str:
     load_dotenv()
-    key = os.getenv("GROQ_API_KEY", "").strip()
+    env_var = "GROQ_API_KEY" if provider == "groq" else "OPENROUTER_API_KEY"
+    key = os.getenv(env_var, "").strip()
     if not key:
         raise OSError(
-            "GROQ_API_KEY is missing. Copy .env.example to .env and set the key."
+            f"{env_var} is missing. Set it in the environment or project .env file."
         )
     return key
+
+
+def create_client(provider: str, api_key: str) -> Groq | OpenAI:
+    if provider == "groq":
+        return Groq(api_key=api_key)
+    return OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
 
 
 def extract_codes(codebook_path: Path) -> list[dict]:
@@ -146,22 +159,27 @@ def extract_text(text_path: Path) -> str:
     return re.sub(r"\s+", " ", raw).strip()
 
 
-def call_llm(client: Groq, messages: list[dict], json_mode: bool = True) -> str:
+def call_llm(
+    client: Groq | OpenAI,
+    messages: list[dict],
+    json_mode: bool = True,
+    model: str = MODELS["groq"],
+) -> str:
     last_err: Exception | None = None
     for attempt in range(MAX_RETRIES):
         try:
-            kwargs = {"model": MODEL, "messages": messages, "temperature": 0}
+            kwargs = {"model": model, "messages": messages, "temperature": 0}
             if json_mode:
                 kwargs["response_format"] = {"type": "json_object"}
             resp = client.chat.completions.create(**kwargs)
             return resp.choices[0].message.content or ""
-        except RateLimitError as e:
+        except RATE_LIMIT_ERRORS as e:
             last_err = e
             time.sleep(2 ** attempt)
-        except APIError as e:
+        except API_ERRORS as e:
             last_err = e
             logging.getLogger(__name__).warning(
-                "Groq API error (attempt %d): %s", attempt + 1, e
+                "LLM API error (attempt %d): %s", attempt + 1, e
             )
             time.sleep(2 ** attempt)
     raise RuntimeError(f"LLM call failed after {MAX_RETRIES} retries: {last_err}")
@@ -175,18 +193,23 @@ def parse_json(content: str) -> dict:
     return json.loads(content)
 
 
-def get_semantic_phrases(client: Groq, factor: str, description: str) -> list[str]:
+def get_semantic_phrases(
+    client: Groq | OpenAI,
+    factor: str,
+    description: str,
+    model: str = MODELS["groq"],
+) -> list[str]:
     prompt = (
-        "You are analyzing ethnic conflict. Given a factor from a conflict-analysis "
-        "codebook, produce multi-word phrases that would plausibly appear in news "
-        "articles about ethnic conflict and would signal this factor.\n\n"
+        "You are analyzing qualitative interview data. Given a factor from qualitative survey"
+        "codebook, produce multi-word phrases that would plausibly appears"
+        "as constructs and would signal this factor.\n\n"
         f"Factor: {factor}\nDescription: {description}\n\n"
         "Return JSON: {\"phrases\": [\"...\", ...]} containing 3-6 multi-word "
         "semantic phrases (each at least 2 words) that capture this factor "
-        "in the context of ethnic conflict. Phrases only, no explanations."
+        "in the context of a qualitative research. Phrases only, no explanations."
     )
     try:
-        content = call_llm(client, [{"role": "user", "content": prompt}])
+        content = call_llm(client, [{"role": "user", "content": prompt}], model=model)
         data = parse_json(content)
         phrases = [p.strip() for p in data.get("phrases", []) if isinstance(p, str)]
         return [p for p in phrases if len(p.split()) >= 2]
@@ -197,10 +220,15 @@ def get_semantic_phrases(client: Groq, factor: str, description: str) -> list[st
         return []
 
 
-def scan_article(client: Groq, text: str, codes: list[dict]) -> dict[str, list[str]]:
+def scan_article(
+    client: Groq | OpenAI,
+    text: str,
+    codes: list[dict],
+    model: str = MODELS["groq"],
+) -> dict[str, list[str]]:
     factor_block = "\n".join(f"- {c['factor']}: {c['description']}" for c in codes)
     prompt = (
-        f"Article text:\n{text}\n\nFactors:\n{factor_block}\n\n"
+        f"interview text:\n{text}\n\nFactors:\n{factor_block}\n\n"
         "For each factor, return exact phrases copied verbatim from the article "
         "that express that factor. Return JSON of the form "
         "{\"<factor name>\": [\"exact phrase\", ...], ...}. "
@@ -208,7 +236,7 @@ def scan_article(client: Groq, text: str, codes: list[dict]) -> dict[str, list[s
         "Use an empty list when none apply."
     )
     try:
-        content = call_llm(client, [{"role": "user", "content": prompt}])
+        content = call_llm(client, [{"role": "user", "content": prompt}], model=model)
         data = parse_json(content)
         return {
             k: [p for p in v if isinstance(p, str)]
@@ -291,7 +319,7 @@ def find_articles_dir(explicit_dir: Path | None, log: logging.Logger) -> Path:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Analyze ethnic conflict factors in text files."
+        description="Analyze qualitative factors in text files."
     )
     p.add_argument(
         "--max-articles",
@@ -302,14 +330,20 @@ def parse_args() -> argparse.Namespace:
         help=f"Max articles to process (default: all; suggested cap {SUGGESTED_MAX_FILES})",
     )
     p.add_argument("--codebook", type=Path, default=Path("code-book-genai.qdc"))
+    p.add_argument(
+        "--provider",
+        choices=tuple(MODELS),
+        default="groq",
+        help="LLM provider (default: groq)",
+    )
     p.add_argument("--articles-dir", type=Path, default=None, help="Directory containing .txt articles (default: data)")
     p.add_argument(
-        "--output", type=Path, default=OUTPUT_DIR / "conflict_analysis_results.md"
+        "--output", type=Path, default=OUTPUT_DIR / "qualitative_analysis_results.md"
     )
     p.add_argument(
         "--csv-output",
         type=Path,
-        default=OUTPUT_DIR / "conflict_analysis_granular.csv",
+        default=OUTPUT_DIR / "qualitative_analysis_granular.csv",
         help="CSV path for article-level semantic term occurrences",
     )
     return p.parse_args()
@@ -317,17 +351,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     setup_logging()
-    log = logging.getLogger("conflict_analysis")
+    log = logging.getLogger("qualitative_analysis")
     args = parse_args()
     try:
-        api_key = load_api_key()
-        client = Groq(api_key=api_key)
+        api_key = load_api_key(args.provider)
+        client = create_client(args.provider, api_key)
+        model = MODELS[args.provider]
+        log.info("Using %s provider with model %s", args.provider, model)
 
         codes = extract_codes(args.codebook)
         log.info("Loaded %d codes from %s", len(codes), args.codebook)
 
         for c in codes:
-            c["semantic_phrases"] = get_semantic_phrases(client, c["factor"], c["description"])
+            c["semantic_phrases"] = get_semantic_phrases(
+                client, c["factor"], c["description"], model=model
+            )
             log.info("Semantic phrases for '%s': %s", c["factor"], c["semantic_phrases"])
             time.sleep(API_SLEEP_SECONDS)
 
@@ -362,7 +400,7 @@ def main() -> int:
                 if not text:
                     log.warning("Empty article: %s", art.name)
                     continue
-                per_factor = scan_article(client, text, codes)
+                per_factor = scan_article(client, text, codes, model=model)
                 for c in codes:
                     raw = per_factor.get(c["factor"], [])
                     verified = [p for p in raw if p.lower() in text.lower()]
