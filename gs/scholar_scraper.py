@@ -119,16 +119,69 @@ def parse_citation(text: str) -> tuple[str, str]:
 
 
 def find_pdf_url(soup: BeautifulSoup, source_url: str) -> str:
+    urls = find_pdf_urls(soup, source_url)
+    return urls[0] if urls else ""
+
+
+def find_pdf_urls(soup: BeautifulSoup, source_url: str) -> List[str]:
     if source_url.lower().endswith(".pdf"):
-        return source_url
-    for anchor in soup.find_all("a"):
+        return [source_url]
+    urls = []
+    pdf_anchors = list(soup.select(".gs_or_ggsm a[href]"))
+    pdf_anchors.extend(
+        anchor for anchor in soup.find_all("a") if anchor not in pdf_anchors
+    )
+    for anchor in pdf_anchors:
         href = anchor.get("href") or ""
         txt = clean_text(anchor.get_text(" ", strip=True))
-        if ".pdf" in href.lower() or ".pdf" in txt.lower():
-            return normalize_url(href, source_url)
-        if "download" in href.lower():
-            return normalize_url(href, source_url)
-    return ""
+        href_lower = href.lower()
+        if "pdf" not in txt.lower() and not any(
+            marker in href_lower for marker in (".pdf", "/pdf/", "download")
+        ):
+            continue
+        url = normalize_url(href, source_url)
+        drive_match = re.match(
+            r"https?://(?:www\.)?drive\.google\.com/file/d/([^/?#]+)",
+            url,
+            flags=re.IGNORECASE,
+        )
+        if drive_match:
+            url = "https://drive.google.com/uc?" + urlencode(
+                {"export": "download", "id": drive_match.group(1)}
+            )
+        if url.startswith(("http://", "https://")) and url not in urls:
+            urls.append(url)
+    return urls
+
+
+def download_pdf(
+    url: str,
+    output_dir: str = "articles",
+    session: requests.Session | None = None,
+) -> str | None:
+    if not url:
+        return None
+
+    client = session or requests.Session()
+    try:
+        response = client.get(url, headers=HEADERS, timeout=30, allow_redirects=True)
+        response.raise_for_status()
+    except requests.RequestException:
+        return None
+
+    content = response.content
+    if b"%PDF-" not in content[:1024] or b"%%EOF" not in content[-1024:]:
+        return None
+
+    os.makedirs(output_dir, exist_ok=True)
+    index = 1
+    while os.path.exists(os.path.join(output_dir, f"pdf-{index}.pdf")):
+        index += 1
+
+    output_path = os.path.join(output_dir, f"pdf-{index}.pdf")
+    with open(output_path, "wb") as pdf_file:
+        pdf_file.write(content)
+    return output_path
 
 
 def extract_record_from_html(html: str | BeautifulSoup, source_url: str) -> dict:
@@ -184,7 +237,8 @@ def extract_record_from_html(html: str | BeautifulSoup, source_url: str) -> dict
 
     citation_details = publication if publication else citation_year
 
-    pdf_url = find_pdf_url(soup, source_url)
+    pdf_urls = find_pdf_urls(soup, source_url)
+    pdf_url = pdf_urls[0] if pdf_urls else ""
 
     return {
         "title": title,
@@ -194,14 +248,16 @@ def extract_record_from_html(html: str | BeautifulSoup, source_url: str) -> dict
         "year": citation_year,
         "citation_details": citation_details,
         "pdf_url": pdf_url,
+        "pdf_urls": pdf_urls,
     }
 
 
 def parse_html_records(html: str | BeautifulSoup, source_url: str, keyword: str = "", progress: bool = True) -> List[dict]:
     soup = html if isinstance(html, BeautifulSoup) else BeautifulSoup(html, "html.parser")
     records: List[dict] = []
-    # Match all plausible Google Scholar result-row wrappers across markup versions.
-    items = soup.select("div.gs_r, div.gs_ri, .gs_or, .gs_gg")
+    items = soup.select("div.gs_r")
+    if not items:
+        items = soup.select(".gs_or, div.gs_ri, .gs_gg")
 
     for item in tqdm(items, disable=not progress, desc="Parsing results", unit="item"):
         record = extract_record_from_html(item, source_url)
@@ -310,15 +366,29 @@ def write_csv(records: Iterable[dict], output_path: str) -> None:
             )
 
 
+def write_pdf_candidates(records: Iterable[dict], output_path: str) -> None:
+    urls = dict.fromkeys(
+        url
+        for record in records
+        for url in (record.get("pdf_urls") or [record.get("pdf_url", "")])
+        if url
+    )
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as output_file:
+        output_file.writelines(f"{url}\n" for url in urls)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scrape research records from Google Scholar pages.")
-    parser.add_argument("--keyword", action="append", default=[], help="Keyword to search for. Repeatable.")
-    parser.add_argument("--keywords", help="Comma-separated keyword list.")
-    parser.add_argument("--url", help="Direct URL to scrape instead of querying a search page.")
-    parser.add_argument("--html-file", help="Path to a local HTML file to parse for testing.")
+    parser.add_argument("--html-file", required=True, help="Path to a local HTML file to parse.")
     parser.add_argument("--limit", type=int, default=25, help="Maximum number of records to export.")
     parser.add_argument("--output", default="output_data.csv", help="Path to the CSV file to write.")
-    parser.add_argument("--delay", type=float, default=7.0, help="Delay in seconds between requests.")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=7.0,
+        help="Delay in seconds between PDF download requests.",
+    )
     parser.add_argument(
         "--no-progress",
         action="store_true",
@@ -326,59 +396,31 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    keywords = list(args.keyword)
-    if args.keywords:
-        keywords.extend(part.strip() for part in args.keywords.split(",") if part.strip())
-    if not keywords and not args.url and not args.html_file:
-        keywords = ["deep learning", "natural language processing"]
-
     progress_enabled = not args.no_progress and sys.stderr.isatty()
 
-    if args.html_file:
-        with open(args.html_file, "r", encoding="utf-8") as handle:
-            html = handle.read()
-        # Derive a sensible base URL from the page itself so relative links (e.g., PDFs) resolve.
-        page_soup = BeautifulSoup(html, "html.parser")
-        base_url = None
-        base_tag = page_soup.find("base", href=True)
-        if base_tag:
-            base_url = base_tag["href"]
-        if not base_url:
-            og = page_soup.find("meta", property="og:url", attrs={"content": True})
-            if og:
-                base_url = og["content"]
-        if not base_url:
-            stem = os.path.splitext(os.path.basename(args.html_file))[0]
-            base_url = f"https://scholar.google.com/scholar?q={quote(stem)}&hl=en"
+    with open(args.html_file, "r", encoding="utf-8") as handle:
+        html = handle.read()
+    # Derive a sensible base URL so relative links (e.g., PDFs) resolve.
+    page_soup = BeautifulSoup(html, "html.parser")
+    base_url = None
+    base_tag = page_soup.find("base", href=True)
+    if base_tag:
+        base_url = base_tag["href"]
+    if not base_url:
+        og = page_soup.find("meta", property="og:url", attrs={"content": True})
+        if og:
+            base_url = og["content"]
+    if not base_url:
+        stem = os.path.splitext(os.path.basename(args.html_file))[0]
+        base_url = f"https://scholar.google.com/scholar?q={quote(stem)}&hl=en"
 
-        records = parse_html_records(
-            html,
-            source_url=base_url,
-            keyword="",
-            progress=progress_enabled,
-        )
-    elif args.url:
-        records = fetch_records_from_url(
-            args.url,
-            keyword="",
-            delay_seconds=args.delay,
-            progress=progress_enabled,
-        )
-    else:
-        records: List[dict] = []
-        for keyword in tqdm(keywords[:5], disable=not progress_enabled, desc="Search keywords", unit="query"):
-            url = build_search_url(keyword)
-            try:
-                records.extend(
-                    fetch_records_from_url(
-                        url,
-                        keyword,
-                        delay_seconds=args.delay,
-                        progress=progress_enabled,
-                    )
-                )
-            except GoogleScholarRateLimitError as exc:
-                print(f"Search aborted for '{keyword}': {exc}")
+    records = parse_html_records(
+        html,
+        source_url=base_url,
+        keyword="",
+        progress=progress_enabled,
+    )
+    write_pdf_candidates(records, os.path.join("output", "fup_pdf.txt"))
 
     filtered = []
     seen = set()
@@ -393,8 +435,27 @@ def main() -> None:
         filtered.append(record)
 
     final_records = filtered[: max(args.limit, 0)]
+    session = requests.Session()
+    downloaded_count = 0
+    pdf_request_count = 0
+    for record in final_records:
+        pdf_urls = record.get("pdf_urls") or [record.get("pdf_url", "")]
+        for pdf_url in pdf_urls:
+            if not pdf_url:
+                continue
+            if pdf_request_count and args.delay > 0:
+                time.sleep(args.delay)
+            pdf_request_count += 1
+            if download_pdf(pdf_url, session=session):
+                record["pdf_url"] = pdf_url
+                downloaded_count += 1
+                break
+        else:
+            record["pdf_url"] = ""
+
     write_csv(final_records, args.output)
     print(f"Scraped {len(final_records)} records. Saved to {args.output}.")
+    print(f"Downloaded {downloaded_count} accessible PDFs to articles/.")
 
 
 if __name__ == "__main__":
