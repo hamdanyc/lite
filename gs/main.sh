@@ -24,7 +24,7 @@ cp -a "$PAGES_DIR" "$PDF_DIR" "$BACKUP_DIR/"
 printf 'Backed up pages and PDFs to: %s\n' "$BACKUP_DIR"
 
 # Step 2: Clear old downloaded pages and PDFs.
-find "$PAGES_DIR" "$PDF_DIR" -type f -delete
+find "$PAGES_DIR" "$PDF_DIR" "$OUTPUT_DIR" -type f -delete
 
 # Step 3: Download Google Scholar result pages.
 printf 'Downloading Google Scholar pages for: %s\n' "$query"
@@ -54,5 +54,9 @@ if [[ "$found_page" != true ]]; then
 fi
 
 awk 'NF && !seen[$0]++' "$combined_urls" > "$URL_FILE"
-# Step 5: Download and validate candidate PDFs, then finish.
+# Step 5: Download and validate candidate PDFs.
 bash "$SCRIPT_DIR/scholar_fup_pdfs.sh"
+
+# Step 6: Build a BibTeX file from the downloaded PDFs.
+printf 'Generating BibTeX from PDFs in %s\n' "$PDF_DIR"
+python3 "$SCRIPT_DIR/get_biblio.py" --pdfs-dir "$PDF_DIR" --output "$OUTPUT_DIR/biblio.bib"
