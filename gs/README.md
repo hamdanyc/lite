@@ -15,6 +15,24 @@ A comprehensive toolkit for scraping Google Scholar, extracting bibliographic me
 
 # Workflows
 
+## Run the Complete Scholar-to-PDF Workflow
+
+Run the end-to-end workflow with a search query:
+
+```bash
+./main.sh "machine learning survey"
+```
+
+`main.sh` runs these steps:
+
+1. Copies the current `pages/` and `pdf/` directories into a unique timestamped directory under `backups/`.
+2. Clears files from `pages/` and `pdf/`, preserving the directories.
+3. Downloads the default 25 Google Scholar result pages.
+4. Scrapes each page, writes page-level CSV files, and combines unique PDF candidate URLs in `output/fup_pdf.txt`.
+5. Downloads and validates candidate PDFs into `pdf/`, then exits.
+
+The downloader requires `curl` and `pdfinfo` (provided by `poppler-utils` on Debian/Ubuntu). The Scholar page downloader uses Selenium/Chrome by default and may require solving a captcha in a visible browser.
+
 ## 1. Download Google Scholar Pages
 
 `scholar_static.py` fetches Google Scholar result pages for a query and saves them as numbered HTML files (e.g. `1.html`, `2.html`, …) in the output directory. These files are the input for the scraping step below.
@@ -52,10 +70,10 @@ For a single page, run the scraper and then the candidate downloader:
 
 ```bash
 python3 scholar_scraper.py --html-file pages/ml_5.html --output output/output_ml_5.csv --no-progress
-bash download_fup_pdfs.sh
+bash scholar_fup_pdfs.sh
 ```
 
-The scraper writes distinct candidate links to `output/fup_pdf.txt` and attempts to download valid, accessible PDFs to `pdf/pdf-N.pdf`. `download_fup_pdfs.sh` retries the URLs in that list, validates each response with `pdfinfo`, and continues numbering after the highest existing `pdf-N.pdf`. It requires `curl` and `pdfinfo` (provided by `poppler-utils` on Debian/Ubuntu). HTML error pages, blocked responses, and invalid PDFs are discarded.
+The scraper writes distinct candidate links to `output/fup_pdf.txt` and attempts to download valid, accessible PDFs to `pdf/pdf-N.pdf`. `scholar_fup_pdfs.sh` retries the URLs in that list, validates each response with `pdfinfo`, and continues numbering after the highest existing `pdf-N.pdf`. HTML error pages, blocked responses, and invalid PDFs are discarded.
 
 **Batch processing (`path/to/gs_run.sh`)** recursively scans `pages/`, extracts records from each HTML file, and merges them into `output/all_records.csv` with deduplication by title and authors. Since each scraper invocation rewrites `output/fup_pdf.txt`, after a batch run that file contains candidates from the last processed HTML page only.
 
@@ -202,8 +220,9 @@ Automatically classified entry types:
 ├── scholar_bibtex_pdf.py     # PDF metadata → BibTeX
 ├── get_biblio.py             # Enhanced PDF → BibTeX with DOI
 ├── merge_bib.py              # BibTeX merge & deduplication
+├── main.sh                   # End-to-end Google Scholar pages → validated PDFs
 ├── path/to/gs_run.sh         # Batch processing script
-├── download_fup_pdfs.sh      # Download and validate candidate PDFs
+├── scholar_fup_pdfs.sh       # Download and validate candidate PDFs
 ├── requirements.txt          # Python dependencies
 ├── pages/                    # Input directory for batch HTML files
 ├── output/                   # Default output directory
