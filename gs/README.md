@@ -4,6 +4,7 @@ A comprehensive toolkit for scraping Google Scholar, extracting bibliographic me
 
 ## Features
 
+- **Google Scholar Downloading** – Fetch result pages for a query into local HTML files, with browser-based fetching and captcha handling
 - **Google Scholar Scraping** – Parse saved HTML pages and batch-process directories of saved pages
 - **BibTeX Generation** – Convert scraped records or PDF metadata into valid BibTeX entries
 - **PDF Metadata Extraction** – Parse title, authors, year, abstract, and DOI from PDF files
@@ -14,7 +15,33 @@ A comprehensive toolkit for scraping Google Scholar, extracting bibliographic me
 
 # Workflows
 
-## 1. Scrape Google Scholar
+## 1. Download Google Scholar Pages
+
+`scholar_static.py` fetches Google Scholar result pages for a query and saves them as numbered HTML files (e.g. `1.html`, `2.html`, …) in the output directory. These files are the input for the scraping step below.
+
+```bash
+python3 scholar_static.py --query "machine learning survey" --pages 25
+```
+
+By default it drives a real headless Chrome browser via Selenium (Google Scholar aggressively rate-limits plain HTTP clients). If Selenium is not installed, or `--no-browser` is passed, it falls back to plain `requests`.
+
+If a captcha is served while running headless, the script automatically restarts the browser in headful mode so you can solve it; the solved session is stored in the persistent profile directory (`--profile-dir`) and reused by later runs. You can also start directly in headful mode with `--headful`.
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--query` | Search query (required) | – |
+| `--pages` | Number of result pages to download | `25` |
+| `--output-dir` | Directory to store downloaded HTML | `pages` |
+| `--profile-dir` | Persistent Chrome profile directory (reused across runs to reduce captchas) | `.chrome-profile` |
+| `--delay` | Seconds to wait between requests | `7.0` |
+| `--timeout` | Per-request timeout (seconds) | `30.0` |
+| `--wait` | Seconds to wait for the browser to load each page | `10.0` |
+| `--max-retries` | Max retries per page | `3` |
+| `--year-from` | Only include results published this year or later (`0` disables) | `2024` |
+| `--no-browser` | Use plain `requests` instead of a headless browser | `False` |
+| `--headful` | Run a visible browser (to solve a captcha manually) | `False` |
+
+## 2. Scrape Google Scholar
 
 | Method | Description | Output |
 |--------|-------------|--------|
@@ -28,11 +55,11 @@ python3 scholar_scraper.py --html-file pages/ml_5.html --output output/output_ml
 bash download_fup_pdfs.sh
 ```
 
-The scraper writes distinct candidate links to `output/fup_pdf.txt` and attempts to download valid, accessible PDFs to `articles/pdf-N.pdf`. `download_fup_pdfs.sh` retries the URLs in that list, validates each response with `pdfinfo`, and continues numbering after the highest existing `pdf-N.pdf`. It requires `curl` and `pdfinfo` (provided by `poppler-utils` on Debian/Ubuntu). HTML error pages, blocked responses, and invalid PDFs are discarded.
+The scraper writes distinct candidate links to `output/fup_pdf.txt` and attempts to download valid, accessible PDFs to `pdf/pdf-N.pdf`. `download_fup_pdfs.sh` retries the URLs in that list, validates each response with `pdfinfo`, and continues numbering after the highest existing `pdf-N.pdf`. It requires `curl` and `pdfinfo` (provided by `poppler-utils` on Debian/Ubuntu). HTML error pages, blocked responses, and invalid PDFs are discarded.
 
 **Batch processing (`path/to/gs_run.sh`)** recursively scans `pages/`, extracts records from each HTML file, and merges them into `output/all_records.csv` with deduplication by title and authors. Since each scraper invocation rewrites `output/fup_pdf.txt`, after a batch run that file contains candidates from the last processed HTML page only.
 
-## 2. Generate BibTeX from Scraped Data
+## 3. Generate BibTeX from Scraped Data
 
 ```bash
 # Basic conversion
@@ -42,7 +69,7 @@ python3 scholar_bibtex.py --input scraped_data.csv --output library.bib
 python3 scholar_bibtex.py --input data.csv --output library.bib --limit 100 --delay 5.0
 ```
 
-## 3. Extract Metadata from PDFs
+## 4. Extract Metadata from PDFs
 
 | Tool | Purpose | Output |
 |------|---------|--------|
@@ -57,7 +84,7 @@ python3 scholar_bibtex_pdf.py --pdfs-dir ./pdfs --output from_pdfs.bib --limit 5
 python3 get_biblio.py --pdfs-dir ./pdfs --output biblio.bib
 ```
 
-## 4. Manage BibTeX Libraries
+## 5. Manage BibTeX Libraries
 
 ```bash
 # Merge two BibTeX files with deduplication and summary
@@ -122,6 +149,19 @@ Automatically classified entry types:
 | `--no-progress` | Disable progress indicators | `False` |
 | `--verbose` | Enable detailed logging | `False` |
 
+## Download-Specific Options
+
+| Option | Description |
+|--------|-------------|
+| `--query` | Search query to download pages for (required) |
+| `--pages` | Number of result pages to download |
+| `--output-dir` | Directory to store downloaded HTML |
+| `--profile-dir` | Persistent Chrome profile directory |
+| `--wait` | Seconds to wait for the browser to load each page |
+| `--year-from` | Only include results published this year or later |
+| `--no-browser` | Use plain `requests` instead of a headless browser |
+| `--headful` | Run a visible browser to solve a captcha manually |
+
 ## Scraper-Specific Options
 
 | Option | Description |
@@ -156,6 +196,7 @@ Automatically classified entry types:
 
 ```
 .
+├── scholar_static.py         # Download Google Scholar result pages to HTML
 ├── scholar_scraper.py        # Core scraping logic
 ├── scholar_bibtex.py         # BibTeX generation from scraped data
 ├── scholar_bibtex_pdf.py     # PDF metadata → BibTeX
@@ -166,7 +207,7 @@ Automatically classified entry types:
 ├── requirements.txt          # Python dependencies
 ├── pages/                    # Input directory for batch HTML files
 ├── output/                   # Default output directory
-├── articles/                 # Downloaded, validated PDFs
+├── pdf/                 # Downloaded, validated PDFs
 ├── pdf/                      # Default PDF input directory
 └── tests/                    # Sample HTML for testing
 ```
@@ -177,7 +218,7 @@ Automatically classified entry types:
 |-----------|---------|
 | `pages/` | Place saved HTML files here for batch processing |
 | `output/` | Default location for generated CSV/BibTeX files |
-| `articles/` | Destination for downloaded, validated PDFs |
+| `pdf/` | Destination for downloaded, validated PDFs |
 | `pdf/` | Default location for PDF input files |
 | `tests/` | Sample HTML files for testing parsers |
 
@@ -197,6 +238,7 @@ Automatically classified entry types:
 | Issue | Solution |
 |-------|----------|
 | **Rate limited (HTTP 429)** | Increase `--delay`, reduce concurrency, wait longer between runs |
+| **Captcha while downloading** | Let the script restart in headful mode and solve it, or run with `--headful`; the solved session is reused via `--profile-dir` |
 | **Empty results** | Check if HTML structure changed; update selectors in `extract_record_from_html` |
 | **PDF parsing fails** | Ensure PDF is text-based (not scanned); try `pdftotext` manually |
 | **Missing DOI** | Use `get_biblio.py` + manually fill `no-doi-found.csv` |
