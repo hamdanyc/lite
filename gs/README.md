@@ -10,6 +10,7 @@ A comprehensive toolkit for scraping Google Scholar, extracting bibliographic me
 - **PDF Metadata Extraction** – Parse title, authors, year, abstract, and DOI from PDF files
 - **PDF Merging** – Combine multiple PDF files into batch files for processing or archiving
 - **BibTeX Management** – Merge, deduplicate, and summarize BibTeX libraries
+- **Chroma Cloud Integration** – Upload PDFs to Chroma Cloud vector database with metadata enrichment
 - **Responsible Scraping** – Built-in throttling, retry logic, and rate-limit handling
 
 ---
@@ -83,7 +84,6 @@ The scraper writes distinct candidate links to `output/fup_pdf.txt` and attempts
 ```bash
 # Basic conversion
 python3 scholar_bibtex.py --input scraped_data.csv --output library.bib
-
 # With options
 python3 scholar_bibtex.py --input data.csv --output library.bib --limit 100 --delay 5.0
 ```
@@ -121,7 +121,7 @@ python3 merge_bib.py --primary main.bib --additional new.bib --output merged.bib
 
 ```bash
 # Basic PDF merging
-python3 merge_pdfs.py --input-dir uploaded --output-dir pdf --limit-files 50 --limit-words 500000
+python3 merge_pdfs.py --input-dir pdf --output-dir pdf --limit-files 50 --limit-words 500000
 ```
 
 **Merge features:**
@@ -134,41 +134,82 @@ python3 merge_pdfs.py --input-dir uploaded --output-dir pdf --limit-files 50 --l
 **Options:**
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--input-dir` | Directory containing PDF files to merge | `uploaded` |
-| `--output-dir` | Directory to save merged PDF batches | `pdf` |
+| `--input-dir` | Directory containing PDF files to merge | `pdf` |
+| `--output-dir` | Directory to save merged PDF batches | `merged_pdfs` |
 | `--limit-files` | Maximum number of files per batch | `50` |
 | `--limit-words` | Maximum estimated words per batch | `500000` |
 
-## 7. Extract Metadata from PDFs
+## 7. Chroma Cloud Integration
 
-| Tool | Purpose | Output |
-|------|---------|--------|
-| `scholar_bibtex_pdf.py` | Parse PDF metadata (title, authors, year, abstract) → BibTeX | `output.bib` + `pdf_src.csv` (cross-reference) |
-| `get_biblio.py` | Enhanced extraction with DOI lookup → BibTeX | `biblio.bib` + `no-doi-found.csv` (manual DOI entry) |
+The scripts in `chroma/` populate and manage a Chroma Cloud vector database. Run commands from the repository root.
+
+### Setup
+
+Install the additional dependencies used by these scripts (they are not included in `requirements.txt`):
 
 ```bash
-# Extract from PDFs (basic)
-python3 scholar_bibtex_pdf.py --pdfs-dir ./pdfs --output from_pdfs.bib --limit 50
-
-# Extract with DOI enrichment
-python3 get_biblio.py --pdfs-dir ./pdfs --output biblio.bib
+python3 -m pip install chromadb python-dotenv PyPDF2 langchain-groq langchain-core tiktoken
 ```
 
----
+Create a `.env` file in the repository root with your Chroma Cloud credentials:
 
-# Input-Output
+```dotenv
+CHROMA_API_KEY=your_chroma_api_key
+CHROMA_TENANT=your_chroma_tenant
+CHROMA_DATABASE=your_chroma_database
+GROQ_API_KEY=your_groq_api_key
+```
 
-## Input Formats
+The PDF upload and LLM enrichment workflows use Groq. `chroma_utilities.py` initializes its Groq model on startup, so its commands also require `GROQ_API_KEY`. Keep `.env` private and do not commit credentials.
 
-| Format | Description |
-|--------|-------------|
-| **HTML** | Saved Google Scholar results pages |
-| **PDF** | PDF files for metadata extraction |
-| **CSV** | Intermediate structured data from scraper |
-| **BibTeX** | Existing bibliography files for merging |
+### Upload PDFs to Chroma
 
-## Output Formats
+```bash
+python3 chroma/chroma_utilities.py batch-process --pdf-dir ./pdf --prefix chroma_batch_
+```
 
+This creates one collection per PDF, with one document per extracted page. Page metadata includes the source filename, page number, and word count; the first page is also used for LLM-based bibliographic metadata extraction. Existing collections with the same generated name are skipped. The script writes a timestamped error log if uploads fail.
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--pdf-dir` | Directory containing PDF files to process | Required |
+| `--prefix` | Prefix for collection names | `chroma_batch_` |
+
+### Manage Collections
+
+```bash
+# List collections
+python3 chroma/chroma_utilities.py list
+
+# Add or replace metadata fields on every document in a collection
+python3 chroma/chroma_utilities.py bulk-update --collection my_collection --metadata '{"review_status": "checked"}'
+
+# Delete a collection from Chroma Cloud (destructive)
+python3 chroma/chroma_utilities.py delete --collection my_collection
+```
+
+### Export, Import, and Search
+
+```bash
+# Export collection documents, metadata, and IDs
+python3 chroma/chroma_utilities.py export --collection my_collection --output exported_data.json
+
+# Import into a new collection
+python3 chroma/chroma_utilities.py import --input exported_data.json --collection new_collection
+
+# Query every collection, requesting up to 10 matches per collection
+python3 chroma/chroma_utilities.py search --query "machine learning" --n-results 10
+```
+
+Import skips the operation if the target collection already exists. Search sorts matches by distance but currently prints only the aggregate match count, not the matching document text.
+
+### Other Chroma Scripts
+
+- `python3 chroma/gs_upload_collect.py` uploads PDFs from `pdf/`, creating one collection per PDF and recording upload failures in `upload.json`.
+- `python3 chroma/gs_llm_collect.py` uses Groq to extract bibliographic metadata from the first page of documents in existing collections.
+- `python3 chroma/gs_modify_collect.py` copies metadata found in each collection's first page text to its documents.
+- `python3 chroma/multi_collection_query.py` retrieves and summarizes passages across collections, writing the result to `compiled.txt`.
+- `python3 chroma/multi_collection_prompt.py "research context" output/context.txt 5` retrieves passages across collections for a supplied context and writes the analysis to the specified output file.
 ### Structured Data (CSV)
 
 | Field Category | Example Fields |
@@ -265,10 +306,17 @@ Automatically classified entry types:
 ├── path/to/gs_run.sh         # Batch processing script
 ├── scholar_fup_pdfs.sh       # Download and validate candidate PDFs
 ├── requirements.txt          # Python dependencies
+├── chroma/                   # Chroma Cloud upload, metadata, and query utilities
+│   ├── chroma_utilities.py   # CLI for upload, collection management, export/import, and search
+│   ├── gs_upload_collect.py  # Upload PDFs from pdf/ into collections
+│   ├── gs_llm_collect.py     # Enrich collection metadata using Groq
+│   ├── gs_modify_collect.py  # Copy first-page metadata to documents
+│   ├── multi_collection_query.py  # Query and summarize across collections
+│   └── multi_collection_prompt.py # Context-based multi-collection analysis
 ├── pages/                    # Input directory for batch HTML files
 ├── output/                   # Default output directory
 ├── pdf/                      # Downloaded, validated PDFs
-├── merge_pdfs/               # Output directory for merged PDFs | source for Gemini notebooks
+├── merged_pdfs/              # Output directory for merged PDFs and Gemini sources
 └── tests/                    # Sample HTML for testing
 ```
 
@@ -278,9 +326,10 @@ Automatically classified entry types:
 |-----------|---------|
 | `pages/` | Place saved HTML files here for batch processing |
 | `output/` | Default location for generated CSV/BibTeX files |
-| `pdf/` | Destination for downloaded, validated PDFs |
-| `pdf/` | Default location for PDF input files |
+| `pdf/` | Destination for downloaded PDFs and default location for PDF inputs |
 | `tests/` | Sample HTML files for testing parsers |
+| `chroma/` | Chroma Cloud utilities and scripts |
+| `merged_pdfs/` | Output directory for merged PDFs, used as sources for Gemini notebooks |
 
 ---
 
