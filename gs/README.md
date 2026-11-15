@@ -8,6 +8,7 @@ A comprehensive toolkit for scraping Google Scholar, extracting bibliographic me
 - **Google Scholar Scraping** – Parse saved HTML pages and batch-process directories of saved pages
 - **BibTeX Generation** – Convert scraped records or PDF metadata into valid BibTeX entries
 - **PDF Metadata Extraction** – Parse title, authors, year, abstract, and DOI from PDF files
+- **PDF Merging** – Combine multiple PDF files into batch files for processing or archiving
 - **BibTeX Management** – Merge, deduplicate, and summarize BibTeX libraries
 - **Responsible Scraping** – Built-in throttling, retry logic, and rate-limit handling
 
@@ -113,6 +114,45 @@ python3 merge_bib.py --primary main.bib --additional new.bib --output merged.bib
 - Deduplicates by DOI, title+authors, or BibTeX key
 - Preserves the most complete record
 - Generates a CRUD summary (Created, Retained, Updated, Deleted)
+
+## 6. Merge PDFs
+
+`merge_pdfs.py` merges multiple PDF files into larger batch files, useful for combining downloaded PDFs for processing or archiving. Use as sources to Gemini notebooks.
+
+```bash
+# Basic PDF merging
+python3 merge_pdfs.py --input-dir uploaded --output-dir pdf --limit-files 50 --limit-words 500000
+```
+
+**Merge features:**
+- Combines PDF files into batches with configurable limits
+- Limits by number of files (default: 50) and estimated word count (default: 500,000)
+- Preserves original PDF content and order
+- Creates named output files (`src_batch_1.pdf`, `src_batch_2.pdf`, etc.)
+- Handles PDF parsing errors gracefully
+
+**Options:**
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--input-dir` | Directory containing PDF files to merge | `uploaded` |
+| `--output-dir` | Directory to save merged PDF batches | `pdf` |
+| `--limit-files` | Maximum number of files per batch | `50` |
+| `--limit-words` | Maximum estimated words per batch | `500000` |
+
+## 7. Extract Metadata from PDFs
+
+| Tool | Purpose | Output |
+|------|---------|--------|
+| `scholar_bibtex_pdf.py` | Parse PDF metadata (title, authors, year, abstract) → BibTeX | `output.bib` + `pdf_src.csv` (cross-reference) |
+| `get_biblio.py` | Enhanced extraction with DOI lookup → BibTeX | `biblio.bib` + `no-doi-found.csv` (manual DOI entry) |
+
+```bash
+# Extract from PDFs (basic)
+python3 scholar_bibtex_pdf.py --pdfs-dir ./pdfs --output from_pdfs.bib --limit 50
+
+# Extract with DOI enrichment
+python3 get_biblio.py --pdfs-dir ./pdfs --output biblio.bib
+```
 
 ---
 
@@ -220,14 +260,15 @@ Automatically classified entry types:
 ├── scholar_bibtex_pdf.py     # PDF metadata → BibTeX
 ├── get_biblio.py             # Enhanced PDF → BibTeX with DOI
 ├── merge_bib.py              # BibTeX merge & deduplication
+├── merge_pdfs.py             # PDF batch merging utility
 ├── main.sh                   # End-to-end Google Scholar pages → validated PDFs
 ├── path/to/gs_run.sh         # Batch processing script
 ├── scholar_fup_pdfs.sh       # Download and validate candidate PDFs
 ├── requirements.txt          # Python dependencies
 ├── pages/                    # Input directory for batch HTML files
 ├── output/                   # Default output directory
-├── pdf/                 # Downloaded, validated PDFs
-├── pdf/                      # Default PDF input directory
+├── pdf/                      # Downloaded, validated PDFs
+├── merge_pdfs/               # Output directory for merged PDFs | source for Gemini notebooks
 └── tests/                    # Sample HTML for testing
 ```
 
